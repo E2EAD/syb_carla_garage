@@ -14,10 +14,4 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 
 # quiz
-1. in leaderboard_evaluator_local.py, vis didn'y work, just have result log.
-2. how to set:
---use_controller_input_prediction 1
---continue_epoch 0
-during 1,2 stage training?
-3. in train.py no:
---use_new_target_speeds 1
+1. after using mu tf decoder, it says some paras not used. find_unused_parameters=True make it right. 

@@ -95,8 +95,9 @@ class PlanningTrajectoryDecoder(nn.Module):
             
             # Register as buffer (not trainable parameters)
             self.register_buffer('anchors', torch.tensor(anchors, dtype=torch.float32))
-            print(f'anchors shape: {torch.tensor(anchors, dtype=torch.float32).shape}')
+            print(f'anchors shape: {torch.tensor(anchors, dtype=torch.float32).shape}')  # (9,20)
             print(f"Created {len(anchors)} anchor trajectories")
+            self.num_anchors = len(anchors)
         else:
             with open(anchor_path, 'r') as f:
                 data = json.load(f)

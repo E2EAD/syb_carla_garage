@@ -21,6 +21,7 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
+from my_query_traj_decoder import PlanningTrajectoryDecoder
 
 
 class LidarCenterNet(nn.Module):
@@ -181,10 +182,11 @@ class LidarCenterNet(nn.Module):
           # + 1 for the target speed token
           self.checkpoint_query = nn.Parameter(
               torch.zeros(1, self.config.predict_checkpoint_len + 1, self.config.gru_input_size))  # (1,11,256)
-          self.checkpoint_decoder = GRUWaypointsPredictorInterFuser(input_dim=self.config.gru_input_size,
-                                                                    hidden_size=self.config.gru_hidden_size,
-                                                                    waypoints=self.config.predict_checkpoint_len,
-                                                                    target_point_size=target_point_size)
+          # self.checkpoint_decoder = GRUWaypointsPredictorInterFuser(input_dim=self.config.gru_input_size,
+          #                                                           hidden_size=self.config.gru_hidden_size,
+          #                                                           waypoints=self.config.predict_checkpoint_len,
+          #                                                           target_point_size=target_point_size)
+          self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
 
         self.reset_parameters()
 
@@ -212,10 +214,11 @@ class LidarCenterNet(nn.Module):
                                                             target_point_size=target_point_size)
 
         if self.config.use_controller_input_prediction:
-          self.checkpoint_decoder = GRUWaypointsPredictorTransFuser(self.config,
-                                                                    pred_len=self.config.predict_checkpoint_len,
-                                                                    hidden_size=self.config.gru_hidden_size,
-                                                                    target_point_size=target_point_size)
+          # self.checkpoint_decoder = GRUWaypointsPredictorTransFuser(self.config,
+          #                                                           pred_len=self.config.predict_checkpoint_len,
+          #                                                           hidden_size=self.config.gru_hidden_size,
+          #                                                           target_point_size=target_point_size)
+          self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
 
     if self.config.use_wp_gru or self.config.use_controller_input_prediction:
       if self.extra_sensors:
@@ -275,6 +278,7 @@ class LidarCenterNet(nn.Module):
     if self.config.multi_wp_output:
       self.selection_loss = nn.BCEWithLogitsLoss()
 
+
   def reset_parameters(self):
     if self.config.use_wp_gru:
       nn.init.uniform_(self.wp_query)
@@ -308,7 +312,7 @@ class LidarCenterNet(nn.Module):
         fused_features = self.change_channel(fused_features)
         fused_features = fused_features + self.encoder_pos_encoding(fused_features)
         fused_features = torch.flatten(fused_features, start_dim=2)
-        print_data_info(fused_features)  # torch.Size([2, 256, 64])
+        # print_data_info(fused_features)  # torch.Size([2, 256, 64])
         if self.config.tp_attention:  # False
           num_pixel_tokens = fused_features.shape[2]
 
@@ -321,13 +325,13 @@ class LidarCenterNet(nn.Module):
           extra_sensors.append(command)
         extra_sensors = torch.cat(extra_sensors, axis=1)
         extra_sensors = self.extra_sensor_encoder(extra_sensors)  # 7 -> 256
-        print_data_info(extra_sensors)  # torch.Size([2, 256])
+        # print_data_info(extra_sensors)  # torch.Size([2, 256])
 
         if self.config.transformer_decoder_join:  # True (use a transformer decoder)
-          print_data_info(self.extra_sensor_pos_embed)  # torch.Size([1, 256])
+          # print_data_info(self.extra_sensor_pos_embed)  # torch.Size([1, 256])
           extra_sensors = extra_sensors + self.extra_sensor_pos_embed.repeat(bs, 1)
           fused_features = torch.cat((fused_features, extra_sensors.unsqueeze(2)), axis=2)
-          print_data_info(fused_features)  # torch.Size([2, 256, 65])
+          # print_data_info(fused_features)  # torch.Size([2, 256, 65])
         else:
           fused_features = torch.cat((fused_features, extra_sensors), axis=1)
 
@@ -350,11 +354,11 @@ class LidarCenterNet(nn.Module):
           if self.config.tp_attention:  # 0
             tp_token = self.tp_encoder(target_point)
             tp_token = tp_token + self.tp_pos_embed
-            print_data_info(tp_token)  # torch.Size([2, 256])
+            # print_data_info(tp_token)  # torch.Size([2, 256])
             fused_features = torch.cat((fused_features, tp_token.unsqueeze(1)), axis=1)
-            print_data_info(fused_features)  # torch.Size([2, 66, 256])
+            # print_data_info(fused_features)  # torch.Size([2, 66, 256])
             joined_checkpoint_features, attention = self.join(self.checkpoint_query.repeat(bs, 1, 1), fused_features)
-            print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
+            # print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
             gru_attention = attention[:, :self.config.predict_checkpoint_len]
             # Average attention for the WP tokens
             gru_attention = torch.mean(gru_attention, dim=1)[0]
@@ -367,22 +371,39 @@ class LidarCenterNet(nn.Module):
             attention_weights = [vision_attention.item(), speed_attention.item(), tp_attention.item()]
           else:
             joined_checkpoint_features = self.join(self.checkpoint_query.repeat(bs, 1, 1), fused_features)
-            print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
+            # print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
 
           gru_features = joined_checkpoint_features[:, :self.config.predict_checkpoint_len]
-          print_data_info(gru_features)  # torch.Size([2, 10, 256])
+          # print_data_info(gru_features)  # torch.Size([2, 10, 256])
           target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
-          print_data_info(target_speed_features)  # torch.Size([2, 256])
+          # print_data_info(target_speed_features)  # torch.Size([2, 256])
 
-          pred_checkpoint = self.checkpoint_decoder(gru_features, target_point) # here we have pred checkpoints
-          print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
+          # pred_checkpoint = self.checkpoint_decoder(gru_features, target_point) # here we have pred checkpoints
+          # print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
+
+          # my decoder get in
+          pred_trajectories, scores = self.query_traj_decoder(gru_features)  # (num_anchors, batch_size, 20) scores: (num_anchors, batch_size)
+          # print_data_info(pred_trajectories)  # torch.Size([K, 2, 20])
+          # print_data_info(scores)  # torch.Size([K, 2])
+          num_anchors = scores.size(0)
+          batch_size = scores.size(1)
+          pred_trajectories = pred_trajectories.reshape(num_anchors, batch_size, 10, 2)  # torch.Size([K, 2, 10, 2])
+
+          # 首先确保scores是合理的
+          scores = torch.clamp(scores, min=-10.0, max=10.0)  # 限制logits范围
+          
+          # 稳定的softmax计算
+          pred_traj_logits = scores - scores.max(dim=0, keepdim=True)[0]
+          pred_traj_probs = F.softmax(pred_traj_logits, dim=0)
+          pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)
+
           if self.config.input_path_to_target_speed_network:  # 0
             ts_input = torch.cat(
                 (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
             pred_target_speed = self.target_speed_network(ts_input)
           else:
             pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
-            print_data_info(pred_target_speed)  # torch.Size([2, 8])
+            # print_data_info(pred_target_speed)  # torch.Size([2, 8])
 
       else:
         joined_features = self.join(fused_features)
@@ -422,36 +443,92 @@ class LidarCenterNet(nn.Module):
     if self.config.detect_boxes:
       pred_bounding_box = self.head(bev_feature_grid)
 
-    return pred_wp, pred_target_speed, pred_checkpoint, pred_semantic, pred_bev_semantic, pred_depth, \
+    return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth, \
       pred_bounding_box, attention_weights, pred_wp_1, selected_path
 
-  def compute_loss(self, pred_wp, pred_target_speed, pred_checkpoint, pred_semantic, pred_bev_semantic, pred_depth,
+  def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth,
                    pred_bounding_box, pred_wp_1, selected_path, waypoint_label, target_speed_label, checkpoint_label,
                    semantic_label, bev_semantic_label, depth_label, center_heatmap_label, wh_label, yaw_class_label,
                    yaw_res_label, offset_label, velocity_label, brake_target_label, pixel_weight_label,
                    avg_factor_label):
     loss = {}
-    if self.config.use_wp_gru:
-      if self.config.multi_wp_output:
-        loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label), dim=(1, 2))
-        loss_wp_1 = torch.mean(torch.abs(pred_wp_1 - waypoint_label), dim=(1, 2))
-        stacked_wp_losses = torch.stack((loss_wp, loss_wp_1), dim=1)
-        loss_wp_total, selection_labels = torch.min(stacked_wp_losses, dim=1, keepdim=True)
-        loss_wp_total = torch.mean(loss_wp_total)
-        loss.update({'loss_wp': loss_wp_total})
-        selection_labels = selection_labels.detach().float()
-        loss_selection = self.selection_loss(selected_path, selection_labels)
-        loss.update({'loss_selection': loss_selection})
-      else:
-        loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label))
-        loss.update({'loss_wp': loss_wp})
+    # if self.config.use_wp_gru:  # 0
+    #   if self.config.multi_wp_output:
+    #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label), dim=(1, 2))
+    #     loss_wp_1 = torch.mean(torch.abs(pred_wp_1 - waypoint_label), dim=(1, 2))
+    #     stacked_wp_losses = torch.stack((loss_wp, loss_wp_1), dim=1)
+    #     loss_wp_total, selection_labels = torch.min(stacked_wp_losses, dim=1, keepdim=True)
+    #     loss_wp_total = torch.mean(loss_wp_total)
+    #     loss.update({'loss_wp': loss_wp_total})
+    #     selection_labels = selection_labels.detach().float()
+    #     loss_selection = self.selection_loss(selected_path, selection_labels)
+    #     loss.update({'loss_selection': loss_selection})
+    #   else:
+    #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label))
+    #     loss.update({'loss_wp': loss_wp})
 
     if self.config.use_controller_input_prediction:
       loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
       loss.update({'loss_target_speed': loss_target_speed})
 
-      loss_wp = torch.mean(torch.abs(pred_checkpoint - checkpoint_label))
-      loss.update({'loss_checkpoint': loss_wp})
+      # loss_wp = torch.mean(torch.abs(pred_checkpoint - checkpoint_label))
+      # loss.update({'loss_checkpoint': loss_wp})
+      num_anchors = pred_traj_probs.size(0)
+      batch_size = pred_traj_probs.size(1)
+      # 计算距离（添加数值稳定性）
+      with torch.no_grad():
+          # print_data_info(checkpoint_label)  # torch.Size([2, 10, 2])
+          distances = torch.norm(
+              pred_trajectories - checkpoint_label.unsqueeze(0), 
+              dim=-1
+          ).sum(dim=-1)  # (num_anchors, batch_size)
+          batch_size = distances.size(1)
+          
+          # 添加距离裁剪，避免极端值
+          distances = torch.clamp(distances, min=1e-6, max=100.0)
+
+      # 3. 创建软标签（修复数值稳定性）
+      with torch.no_grad():
+          # 使用稳定的softmax计算
+          neg_distances = -distances / self.config.temperature
+          # 减去最大值提高数值稳定性
+          neg_distances = neg_distances - neg_distances.max(dim=0, keepdim=True)[0]
+          soft_labels = F.softmax(neg_distances, dim=0)
+          
+          # 确保概率分布有效
+          soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+      
+      kl_loss = F.kl_div(
+            torch.log(pred_traj_probs + 1e-8),  # 输入应该是log(prediction)
+            soft_labels,                    # target应该是概率分布
+            reduction='batchmean',
+            log_target=False  # 明确指定target不是log形式
+            )
+      loss.update({'loss_kl_div': kl_loss})
+
+      # WEIGHTED REGRESSION LOSS - Use ALL trajectories weighted by their probabilities
+      # Expand checkpoint_label to match pred_trajectories shape
+      checkpoint_expanded = checkpoint_label.unsqueeze(0).expand(num_anchors, -1, -1, -1)
+      
+      # Calculate regression loss for EACH trajectory
+      regression_losses = F.smooth_l1_loss(
+          pred_trajectories, 
+          checkpoint_expanded, 
+          reduction='none'
+      )  # (num_anchors, batch_size, 10, 2)
+      
+      # Sum over waypoints and coordinates, keep batch and anchor dimensions
+      regression_losses = regression_losses.sum(dim=(-1, -2))  # (num_anchors, batch_size)
+      
+      # Weight each trajectory's loss by its probability
+      weighted_regression_loss = torch.sum(regression_losses * pred_traj_probs.detach()) / batch_size
+      loss.update({'loss_weighted_regression': weighted_regression_loss})
+
+      # BEST TRAJECTORY LOSS - Supervision for the best trajectory
+      min_distances, best_indices = torch.min(distances, dim=0)
+      best_pred_trajectories = pred_trajectories[best_indices, torch.arange(batch_size)]
+      best_trajectory_loss = F.smooth_l1_loss(best_pred_trajectories, checkpoint_label)
+      loss.update({'loss_best_trajectory': best_trajectory_loss })
 
     if self.config.use_semantic:
       loss_semantic = self.loss_semantic(pred_semantic, semantic_label)
@@ -698,7 +775,9 @@ class LidarCenterNet(nn.Module):
       pred_semantic=None,
       pred_bev_semantic=None,
       pred_depth=None,
-      pred_checkpoint=None,
+      # pred_checkpoint=None,
+      pred_trajectories = None, 
+      pred_traj_probs = None,
       pred_speed=None,
       pred_target_speed_scalar=None,
       pred_bb=None,
@@ -806,7 +885,11 @@ class LidarCenterNet(nn.Module):
         cv2.circle(images_lidar, (int(wp_x), int(wp_y)), radius=8, lineType=cv2.LINE_AA, color=(0, 0, 0), thickness=-1)
 
     # Green predicted checkpoint
-    if pred_checkpoint is not None:
+    if pred_trajectories is not None:
+      batch_size = pred_traj_probs.size(1)
+      max_prob, best_indices = torch.max(pred_traj_probs, dim=0)
+      best_pred_trajectories = pred_trajectories[best_indices, torch.arange(batch_size)]
+      pred_checkpoint = best_pred_trajectories 
       for wp in pred_checkpoint.detach().cpu().numpy()[0]:
         wp_x = wp[0] * loc_pixels_per_meter + origin[0]
         wp_y = wp[1] * loc_pixels_per_meter + origin[1]

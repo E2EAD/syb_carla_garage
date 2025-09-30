@@ -52,6 +52,8 @@ def main():
 
   # Loads the default values for the argparse so we have only one default
   config = GlobalConfig()
+  # print(config.forcast_time)
+  # print(config.tf_de_dim)
 
   parser = argparse.ArgumentParser()
   parser.add_argument('--id', type=str, default=config.id, help='Unique experiment identifier.')
@@ -571,6 +573,7 @@ def main():
                                                     output_device=None,
                                                     broadcast_buffers=False,
                                                     find_unused_parameters=find_unused_parameters)
+                                                    # find_unused_parameters=True)
 
   if config.use_optim_groups:
     params = model.module.create_optimizer_groups(config.weight_decay)
@@ -791,7 +794,7 @@ class Engine(object):
       target_speed = data['target_speed'].to(self.device, dtype=torch.long)
 
     # Load model specific data and execute model
-    if self.config.use_plant:
+    if self.config.use_plant:  # 0
       checkpoint = data['route'][:, :self.config.num_route_points].to(self.device, dtype=torch.float32)
       light_hazard = data['light'].to(self.device, dtype=torch.int32).unsqueeze(1)
       stop_hazard = data['stop_sign'].to(self.device, dtype=torch.int32).unsqueeze(1)
@@ -828,7 +831,8 @@ class Engine(object):
 
       pred_wp,\
       pred_target_speed,\
-      pred_checkpoint,\
+      pred_trajectories, \
+      pred_traj_probs, \
       pred_semantic, \
       pred_bev_semantic, \
       pred_depth, \
@@ -846,7 +850,7 @@ class Engine(object):
     compute_loss = self.model.module.compute_loss
     visualize_model = self.model.module.visualize_model
 
-    if self.config.use_plant:
+    if self.config.use_plant:  # 0
       losses = compute_loss(pred_wp=pred_wp,
                             pred_target_speed=pred_target_speed,
                             pred_checkpoint=pred_checkpoint,
@@ -858,7 +862,8 @@ class Engine(object):
     else:
       losses = compute_loss(pred_wp=pred_wp,
                             pred_target_speed=pred_target_speed,
-                            pred_checkpoint=pred_checkpoint,
+                            pred_trajectories = pred_trajectories, 
+                            pred_traj_probs = pred_traj_probs,
                             pred_semantic=pred_semantic,
                             pred_bev_semantic=pred_bev_semantic,
                             pred_depth=pred_depth,
@@ -924,7 +929,9 @@ class Engine(object):
                         pred_semantic=pred_semantic,
                         pred_bev_semantic=pred_bev_semantic,
                         pred_depth=pred_depth,
-                        pred_checkpoint=pred_checkpoint,
+                        # pred_checkpoint=pred_checkpoint,
+                        pred_trajectories = pred_trajectories, 
+                        pred_traj_probs = pred_traj_probs,
                         pred_speed=F.softmax(pred_target_speed, dim=1) if pred_target_speed is not None else None,
                         pred_bb=pred_bounding_box,
                         gt_wp=ego_waypoint,

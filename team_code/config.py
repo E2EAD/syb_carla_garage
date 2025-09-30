@@ -485,7 +485,10 @@ class GlobalConfig:
     self.cosine_t_mult = 2
     # Weights applied to each of these losses, when combining them
     self.detailed_loss_weights = {
-        'loss_wp': 1.0,
+        # 'loss_wp': 1.0,
+        'loss_weighted_regression': 0.001,
+        'loss_best_trajectory': 1.0,
+        'loss_kl_div': 1.0,
         'loss_target_speed': 1.0,
         'loss_checkpoint': 1.0,
         'loss_semantic': 1.0,
@@ -827,19 +830,21 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path="dpmm_model/results/2025-09-08-02-16/track_cluster_log/4-0-0-6853-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = None  # run under project root
     self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
 
 
     # -----------------------------------------------------------------------------
-    # Transformer decoder (auery style)
+    # Transformer decoder (query style)
     # -----------------------------------------------------------------------------  
-    tf_de_dim: 256
-    tf_de_heads: 6
-    tf_de_layers: 4
-    tf_de_dropout: 0.05
-    tf_de_tgt_dim: 15
+    self.tf_de_dim = 256
+    self.tf_de_heads = 8
+    self.tf_de_layers = 4
+    self.tf_de_dropout = 0.05
+    # self.tf_de_tgt_dim = 15
+
+    self.temperature = 1
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():
