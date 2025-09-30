@@ -375,7 +375,7 @@ class GlobalConfig:
     self.lidar_seq_len = 1
     # Number of initial frames to skip during data loading
     self.skip_first = int(2.5 * self.carla_fps) // self.data_save_freq
-    self.pred_len = int(2.0 * self.carla_fps) // self.data_save_freq  # number of future waypoints predicted
+    self.pred_len = int(2.0 * self.carla_fps) // self.data_save_freq  # number of future waypoints predicted  2*20/5 = 8
     # Width and height of the LiDAR grid that the point cloud is voxelized into.
     self.lidar_resolution_width = 256
     self.lidar_resolution_height = 256
@@ -762,7 +762,7 @@ class GlobalConfig:
     # Unit meters. Points from the LiDAR higher than this threshold are discarded. Default uses all the points.
     self.max_height_lidar = 100.0
 
-    self.tp_attention = False  # Adds a TP at the TF decoder and computes it with attention visualization.
+    self.tp_attention = True  # Adds a TP at the TF decoder and computes it with attention visualization.
     self.multi_wp_output = False  # Predicts 2 WP outputs and uses the min loss of both.
 
     # whether to give the predicted path as input to the target speed network (and use more layers)
@@ -824,11 +824,29 @@ class GlobalConfig:
     self.plant_max_speed_pred = 60.0  # Maximum speed we classify when forcasting cars.
     self.forcast_time = 0.5  # Number of seconds we forcast into the future
 
+    # -----------------------------------------------------------------------------
+    # Traj anchors
+    # -----------------------------------------------------------------------------
+    self.prior_traj_path="dpmm_model/results/2025-09-08-02-16/track_cluster_log/4-0-0-6853-tracked_clusters.json"  # run under project root
+    self.trajectory_distance_threshold = 25
+    self.score_loss_weight = 1
+
+
+    # -----------------------------------------------------------------------------
+    # Transformer decoder (auery style)
+    # -----------------------------------------------------------------------------  
+    tf_de_dim: 256
+    tf_de_heads: 6
+    tf_de_layers: 4
+    tf_de_dropout: 0.05
+    tf_de_tgt_dim: 15
+
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():
       setattr(self, k, v)
 
     self.root_dir = root_dir
+    print(f'config init. dataset root dir: {self.root_dir}')
 
     if setting == 'all':
       pass
@@ -856,3 +874,4 @@ class GlobalConfig:
     self.data_roots = []
     for td_path in self.root_dir:
       self.data_roots = self.data_roots + [os.path.join(td_path, name) for name in os.listdir(td_path)]
+    print(f'dataset root: {self.data_roots}')

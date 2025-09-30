@@ -1,0 +1,23 @@
+# before run:
+. export_python_path.sh
+
+
+# download regnety32:
+# Make sure hf CLI is installed: pip install -U "huggingface_hub[cli]"
+hf download timm/regnety_032.ra_in1k
+
+# or chage to hf-miooro:
+export HF_ENDPOINT=https://hf-mirror.com
+
+# carla takes too much gpu:
+./CarlaUE4.sh -RenderOffScreen
+
+
+# quiz
+1. in leaderboard_evaluator_local.py, vis didn'y work, just have result log.
+2. how to set:
+--use_controller_input_prediction 1
+--continue_epoch 0
+during 1,2 stage training?
+3. in train.py no:
+--use_new_target_speeds 1

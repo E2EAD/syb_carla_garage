@@ -1,1 +1,14 @@
+# Ignore build/output directories
+pretrained_models/
+results/
+vis/
+
+# Temporary/intermediate files
 __pycache__/
+*.pyc
+*.log
+*.ckpt
+
+# OS & editor files
+.DS_Store
+Thumbs.db

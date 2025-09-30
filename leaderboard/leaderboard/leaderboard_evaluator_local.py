@@ -471,26 +471,26 @@ def main():
                         help='Set the CARLA client timeout value in seconds')
 
     # simulation setup
-    parser.add_argument('--routes', required=True,
-                        help='Name of the routes file to be executed.')
+    parser.add_argument('--routes', #required=True,
+                        help='Name of the routes file to be executed.', default="leaderboard/data/debug.xml")
     parser.add_argument('--routes-subset', default='', type=str,
                         help='Execute a specific set of routes')
     parser.add_argument('--repetitions', type=int, default=1,
                         help='Number of repetitions per route.')
 
     # agent-related options
-    parser.add_argument("-a", "--agent", type=str,
-                        help="Path to Agent's py file to evaluate", required=True)
+    parser.add_argument("-a", "--agent", type=str, #required=True,
+                        help="Path to Agent's py file to evaluate", default="team_code/sensor_agent.py")
     parser.add_argument("--agent-config", type=str,
-                        help="Path to Agent's configuration file", default="")
+                        help="Path to Agent's configuration file", default="pretrained_models/all_towns")
 
     parser.add_argument("--track", type=str, default='SENSORS',
                         help="Participation track: SENSORS, MAP")
     parser.add_argument('--resume', type=int, default=False,
                         help='Resume execution from last checkpoint?')
-    parser.add_argument("--checkpoint", type=str, default='./simulation_results.json',
+    parser.add_argument("--checkpoint", type=str, default='results/simulation_results.json',
                         help="Path to checkpoint used for saving statistics and resuming")
-    parser.add_argument("--debug-checkpoint", type=str, default='./live_results.txt',
+    parser.add_argument("--debug-checkpoint", type=str, default='results/live_results.txt',
                         help="Path to checkpoint used for saving live results")
 
     arguments = parser.parse_args()

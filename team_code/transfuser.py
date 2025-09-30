@@ -11,6 +11,7 @@ from video_swin_transformer import SwinTransformer3D
 import transfuser_utils as t_u
 from video_resnet import VideoResNet
 import copy
+from safetensors import safe_open
 
 
 class TransfuserBackbone(nn.Module):
@@ -23,6 +24,29 @@ class TransfuserBackbone(nn.Module):
     self.config = config
 
     self.image_encoder = timm.create_model(config.image_architecture, pretrained=True, features_only=True)
+
+    # if config.image_architecture == 'regnety_032':
+    #     print("Loading regnety_032 from local safetensors...")
+    #     self.image_encoder = timm.create_model('regnety_032', pretrained=False, features_only=True)
+
+    #     safetensor_path = "pretrained_models/models--timm--regnety_032.ra_in1k/snapshots/8159ad6dd3b3581844c63840b917557214da7295/model.safetensors"
+
+    #     # 加载 safetensors
+    #     state_dict = {}
+    #     with safe_open(safetensor_path, framework="pt", device="cpu") as f:
+    #         for key in f.keys():
+    #             # 只保留 backbone 部分，跳过分类头
+    #             if not key.startswith('head.'):
+    #                 state_dict[key] = f.get_tensor(key)
+
+    #     # 现在可以安全加载
+    #     self.image_encoder.load_state_dict(state_dict, strict=True)
+    #     print("regnety_032 backbone weights loaded successfully (head skipped).")
+    # else:
+    #     print("no image_architecture loaded from local")
+    #     self.image_encoder = timm.create_model(config.image_architecture,
+    #                                           pretrained=False,
+    #                                           features_only=True)
 
     self.lidar_video = False
     if config.lidar_architecture in ('video_resnet18', 'video_swin_tiny'):
@@ -48,11 +72,45 @@ class TransfuserBackbone(nn.Module):
       self.global_pool_lidar = nn.AdaptiveAvgPool3d(output_size=1)
       self.avgpool_lidar = nn.AdaptiveAvgPool3d((None, self.config.lidar_vert_anchors, self.config.lidar_horz_anchors))
       lidar_time_frames = [3, 3, 3, 3]
+
+    # elif config.lidar_architecture == 'regnety_032':
+    #     print("Loading regnety_032 from local safetensors for LIDAR...")
+    #     # 注意：必须设置 in_chans=in_channels（例如 in_channels=64 或 32，取决于你的 BEV 输入）
+    #     self.lidar_encoder = timm.create_model(
+    #         'regnety_032',
+    #         pretrained=False,
+    #         in_chans=in_channels,        # 关键：LiDAR 特征图的输入通道数
+    #         features_only=True
+    #     )
+
+    #     # 复用同一个 safetensors 文件（因为是同一个 backbone 权重）
+    #     safetensor_path = "pretrained_models/models--timm--regnety_032.ra_in1k/snapshots/8159ad6dd3b3581844c63840b917557214da7295/model.safetensors"
+    #     state_dict = {}
+    #     with safe_open(safetensor_path, framework="pt", device="cpu") as f:
+    #             for key in f.keys():
+    #                 if not key.startswith('head.'):  # 跳过分类头
+    #                     tensor = f.get_tensor(key)
+    #                     if key == 'stem.conv.weight' and tensor.shape[1] != in_channels:
+    #                         # 如果输入通道数不匹配，则复制或重复原始权重
+    #                         if in_channels < tensor.shape[1]:
+    #                             tensor = tensor[:, :in_channels, :, :]
+    #                         else:
+    #                             # 重复初始通道以适应新的输入通道数
+    #                             tensor = tensor.repeat(1, (in_channels + 2) // tensor.shape[1], 1, 1)[:, :in_channels, :, :]
+    #                     state_dict[key] = tensor
+
+    #     self.lidar_encoder.load_state_dict(state_dict, strict=True)
+    #     print("LiDAR encoder (regnety_032) weights loaded successfully.")
+    #     self.global_pool_lidar = nn.AdaptiveAvgPool2d(output_size=1)
+    #     self.avgpool_lidar = nn.AdaptiveAvgPool2d((self.config.lidar_vert_anchors, self.config.lidar_horz_anchors))
+    #     lidar_time_frames = [1, 1, 1, 1]
+
     else:
       self.lidar_encoder = timm.create_model(config.lidar_architecture,
                                              pretrained=False,
                                              in_chans=in_channels,
                                              features_only=True)
+
       self.global_pool_lidar = nn.AdaptiveAvgPool2d(output_size=1)
       self.avgpool_lidar = nn.AdaptiveAvgPool2d((self.config.lidar_vert_anchors, self.config.lidar_horz_anchors))
       lidar_time_frames = [1, 1, 1, 1]

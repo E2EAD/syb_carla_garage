@@ -9,25 +9,36 @@
 #SBATCH --error=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/results/logs/b2d_009_%a_%A.err   # File to which STDERR will be written
 #SBATCH --partition=2080-galvani
 
-export CARLA_ROOT=/mnt/lustre/work/geiger/bjaeger25/CARLA_0_9_15
-export WORK_DIR=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/Bench2Drive
+# export CARLA_ROOT=/mnt/lustre/work/geiger/bjaeger25/CARLA_0_9_15
+# export WORK_DIR=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/Bench2Drive
+# export SCENARIO_RUNNER_ROOT=${WORK_DIR}/scenario_runner
+# export LEADERBOARD_ROOT=${WORK_DIR}/leaderboard
+# export PYTHONPATH=$PYTHONPATH:/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code
+# export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${LEADERBOARD_ROOT}":${PYTHONPATH}
+
+export CARLA_ROOT=/home/syb/carla/carla_0_9_15
+export WORK_DIR=/home/syb/carla_garage/Bench2Drive
 export SCENARIO_RUNNER_ROOT=${WORK_DIR}/scenario_runner
 export LEADERBOARD_ROOT=${WORK_DIR}/leaderboard
-export PYTHONPATH=$PYTHONPATH:/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code
+export PYTHONPATH=$PYTHONPATH:/home/syb/carla_garage/team_code
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":"${SCENARIO_RUNNER_ROOT}":"${LEADERBOARD_ROOT}":${PYTHONPATH}
+
+export PROJECT_ROOT=/home/syb/carla_garage
 
 #!/bin/bash
 BASE_PORT=30000
 BASE_TM_PORT=50000
 IS_BENCH2DRIVE=True
 BASE_ROUTES=${WORK_DIR}/leaderboard/data/bench2drive220
-TEAM_AGENT=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/sensor_agent.py
+# TEAM_AGENT=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/sensor_agent.py
+TEAM_AGENT=/home/syb/carla_garage/team_code/sensor_agent.py
 # Must set YOUR_CKPT_PATH
-TEAM_CONFIG=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/checkpoints/tfpp_009_ensemble_0_1_2
+# TEAM_CONFIG=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/checkpoints/tfpp_009_ensemble_0_1_2
+TEAM_CONFIG=${PROJECT_ROOT}/pretrained_models/all_towns
 BASE_CHECKPOINT_ENDPOINT=eval_bench2drive220
 PLANNER_TYPE=traj
 ALGO=tfpp
-SAVE_PATH=${WORK_DIR}/leaderboard/data/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
+SAVE_PATH=${WORK_DIR}/leaderboard/data/results/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
 
 if [ ! -d "${ALGO}_b2d_${PLANNER_TYPE}" ]; then
     mkdir ${ALGO}_b2d_${PLANNER_TYPE}
@@ -50,8 +61,10 @@ fi
 
 echo -e "**************\033[36m Please Manually adjust GPU or TASK_ID \033[0m **************"
 # Example, 8*H100, 1 task per gpu
-GPU_RANK_LIST=(0 1 2 3 4 5 6 7)
-TASK_LIST=(0 1 2 3 4 5 6 7)
+# GPU_RANK_LIST=(0 1 2 3 4 5 6 7)
+# TASK_LIST=(0 1 2 3 4 5 6 7)
+GPU_RANK_LIST=(0)
+TASK_LIST=(0)
 echo -e "\033[32m GPU_RANK_LIST: $GPU_RANK_LIST \033[0m"
 echo -e "\033[32m TASK_LIST: $TASK_LIST \033[0m"
 echo -e "***********************************************************************************"

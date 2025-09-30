@@ -22,7 +22,7 @@ import pickle
 import re
 
 
-class CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-name
+class Ability_CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-name
   """
     Custom dataset that dynamically loads a CARLA dataset from disk.
     """
@@ -34,7 +34,8 @@ class CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-name
                estimate_sem_distribution=False,
                shared_dict=None,
                rank=0,
-               validation=False):
+               validation=False,
+               ability = None):
     self.config = config
     self.validation = validation
     assert config.img_seq_len == 1
@@ -69,21 +70,36 @@ class CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-name
     self.angle_distribution = np.arange(len(config.angles)).tolist()
     self.speed_distribution = np.arange(len(config.target_speeds)).tolist()
     self.semantic_distribution = np.arange(len(config.semantic_weights)).tolist()
+
+    self.Ability = {
+    "Overtaking":['Accident', 'AccidentTwoWays', 'ConstructionObstacle', 'ConstructionObstacleTwoWays', 'HazardAtSideLaneTwoWays', 'HazardAtSideLane', 'ParkedObstacleTwoWays', 'ParkedObstacle', 'VehicleOpensDoorTwoWays'],
+    "Merging": ['CrossingBicycleFlow', 'EnterActorFlow', 'HighwayExit', 'InterurbanActorFlow', 'HighwayCutIn', 'InterurbanAdvancedActorFlow', 'MergerIntoSlowTrafficV2', 'MergerIntoSlowTraffic', 'NonSignalizedJunctionLeftTurn', 'NonSignalizedJunctionRightTurn', 'NonSignalizedJunctionLeftTurnEnterFlow', 'ParkingExit', 'SequentialLaneChange', 'SignalizedJunctionLeftTurn', 'SignalizedJunctionRightTurn', 'SignalizedJunctionLeftTurnEnterFlow'],
+    "Emergency_Brake": ['BlockedIntersection', 'DynamicObjectCrossing', 'HardBreakRoute', 'OppositeVehicleTakingPriority', 'OppositeVehicleRunningRedLight', 'ParkingCutIn', 'PedestrianCrossing', 'ParkingCrossingPedestrian', 'StaticCutIn', 'VehicleTurningRoute', 'VehicleTurningRoutePedestrian', 'ControlLoss'],
+    "Give_Way": ['InvadingTurn', 'YieldToEmergencyVehicle'],
+    "Traffic_Sign": ['BlockedIntersection', 'OppositeVehicleTakingPriority', 'OppositeVehicleRunningRedLight', 'PedestrianCrossing', 'VehicleTurningRoute', 'VehicleTurningRoutePedestrian', 'EnterActorFlow', 'CrossingBicycleFlow', 'NonSignalizedJunctionLeftTurn', 'NonSignalizedJunctionRightTurn', 'NonSignalizedJunctionLeftTurnEnterFlow', 'OppositeVehicleTakingPriority', 'OppositeVehicleRunningRedLight', 'PedestrianCrossing', 'SignalizedJunctionLeftTurn', 'SignalizedJunctionRightTurn', 'SignalizedJunctionLeftTurnEnterFlow', 'T_Junction', 'VanillaNonSignalizedTurn', 'VanillaSignalizedTurnEncounterGreenLight', 'VanillaSignalizedTurnEncounterRedLight', 'VanillaNonSignalizedTurnEncounterStopsign', 'VehicleTurningRoute', 'VehicleTurningRoutePedestrian'],
+    "No_Scenarios": ['noScenarios']
+    }
     total_routes = 0
     trainable_routes = 0
     skipped_routes = 0
 
+    print('root_lists: ', root)
+    selected_ability = ability
+    selected_scenarios = self.Ability.get(selected_ability, [])
+    print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
+    filtered_roots = [
+        path for path in root 
+        if os.path.basename(path) in selected_scenarios
+    ]
+    print('filtered_roots: ', filtered_roots)
+
     # loops over the scenarios given in root (which is a list of the scenario folders)
-    for sub_root in tqdm(root, file=sys.stdout, disable=rank != 0):
-
-      # print(f'root: {root} \n sub_root: {sub_root}')
-
+    for sub_root in tqdm(filtered_roots, file=sys.stdout, disable=rank != 0):
+      print('root_name: ', sub_root)
       # list subdirectories in root
       routes = next(os.walk(sub_root))[1]
-      # print(f'routes: {routes}')
 
       for route in routes:  # loop over individual routes within this scenario folder
-        # print(f'route: {route}')
         repetition = int(re.search('_Rep(\\d+)', route).group(1))
         if repetition >= self.config.num_repetitions:
           continue
