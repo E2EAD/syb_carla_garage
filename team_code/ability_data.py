@@ -77,18 +77,21 @@ class Ability_CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-
     "Emergency_Brake": ['BlockedIntersection', 'DynamicObjectCrossing', 'HardBreakRoute', 'OppositeVehicleTakingPriority', 'OppositeVehicleRunningRedLight', 'ParkingCutIn', 'PedestrianCrossing', 'ParkingCrossingPedestrian', 'StaticCutIn', 'VehicleTurningRoute', 'VehicleTurningRoutePedestrian', 'ControlLoss'],
     "Give_Way": ['InvadingTurn', 'YieldToEmergencyVehicle'],
     "Traffic_Sign": ['BlockedIntersection', 'OppositeVehicleTakingPriority', 'OppositeVehicleRunningRedLight', 'PedestrianCrossing', 'VehicleTurningRoute', 'VehicleTurningRoutePedestrian', 'EnterActorFlow', 'CrossingBicycleFlow', 'NonSignalizedJunctionLeftTurn', 'NonSignalizedJunctionRightTurn', 'NonSignalizedJunctionLeftTurnEnterFlow', 'OppositeVehicleTakingPriority', 'OppositeVehicleRunningRedLight', 'PedestrianCrossing', 'SignalizedJunctionLeftTurn', 'SignalizedJunctionRightTurn', 'SignalizedJunctionLeftTurnEnterFlow', 'T_Junction', 'VanillaNonSignalizedTurn', 'VanillaSignalizedTurnEncounterGreenLight', 'VanillaSignalizedTurnEncounterRedLight', 'VanillaNonSignalizedTurnEncounterStopsign', 'VehicleTurningRoute', 'VehicleTurningRoutePedestrian'],
-    "No_Scenarios": ['noScenarios']
+    "No_Scenario": ['noScenarios']
     }
     total_routes = 0
     trainable_routes = 0
     skipped_routes = 0
 
-    print('root_lists: ', root)
+    print('root: ', root)
+    scenario_list = [os.path.join(root, d) for d in os.listdir(root) 
+                           if os.path.isdir(os.path.join(root, d))]
+    print('scenario_list:', scenario_list)
     selected_ability = ability
     selected_scenarios = self.Ability.get(selected_ability, [])
     print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
     filtered_roots = [
-        path for path in root 
+        path for path in scenario_list
         if os.path.basename(path) in selected_scenarios
     ]
     print('filtered_roots: ', filtered_roots)

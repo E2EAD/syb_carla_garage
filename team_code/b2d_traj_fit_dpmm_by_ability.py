@@ -4,6 +4,7 @@ run this code under ~/dpmm_model/model (after properly setting b2d_train).
 
 # import multiprocessing
 # multiprocessing.set_start_method('spawn', force=True)
+import bnpy
 import sys
 import json
 import os
@@ -68,9 +69,9 @@ def train_dpmm(dpmm, config, skill_dataloaders):
                     batch = {k: v.cuda() if torch.is_tensor(v) else v for k, v in batch.items()}
                     # print(f'shape of flatten traj: {batch["flatten_trajectory_points"].detach().shape}')
                     batch_size = batch['route'].size(0)
-                    print(f'route shape: {batch["route"].shape}')
+                    # print(f'route shape: {batch["route"].shape}')
                     flatten_route = batch['route'].detach().reshape(batch_size, -1)
-                    print(f'flatten_route shape: {flatten_route.shape}')
+                    # print(f'flatten_route shape: {flatten_route.shape}')
                     current_f_traj_list.append(flatten_route)
                     if (batch_idx + 1) % dpmm_update_freq == 0:
                         print(f"Updating DPMM at iteration {batch_idx}...")
@@ -92,12 +93,12 @@ def train_dpmm(dpmm, config, skill_dataloaders):
                         #track dpmm clusters
                         tracked_clusters = sorted([{'cluster_id': data['id'],'mu': data['mu'],'var': data['var']} for data in dpmm.current_clusters.values()], key=lambda x: x['cluster_id'])
                         tracked_clusters = convert_tensor_to_list(tracked_clusters)
-                        tracked_clusters_path = os.path.join('results/'+exp_time+'/track_cluster_log', str(skill_id)+'-'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-tracked_clusters.json")
+                        tracked_clusters_path = os.path.join('dpmm_results/'+exp_time+'/track_cluster_log', str(skill_id)+'-'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-tracked_clusters.json")
                         with open(tracked_clusters_path, 'w') as f:
                             json.dump(tracked_clusters, f, indent=4)
                         print(f"Saved tracked_cluster to {tracked_clusters_path}")
                         components = sorted(dpmm.components, key = lambda x: x['k'])
-                        components_path = os.path.join('results/'+exp_time+'/component_log', str(skill_id)+'-'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-components.json")
+                        components_path = os.path.join('dpmm_results/'+exp_time+'/component_log', str(skill_id)+'-'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-components.json")
                         with open(components_path, 'w') as f:
                             json.dump(components, f, indent=4)
                         print(f"Saved component to {components_path}")
@@ -107,17 +108,17 @@ def train_dpmm(dpmm, config, skill_dataloaders):
             # print(f"Generating t-SNE visualization for task {task_id}...")
             # tsne_z_samples, tsne_scen_labels = collect_samples_for_tsne(model, used_dataloaders, device)
             # tsne_z_samples, tsne_scen_labels = collect_samples_for_tsne_v2(used_dataloaders, device)
-            # visualize_tsne(tsne_z_samples, tsne_scen_labels, used_dataloaders, 'results/'+exp_time+'/cluster_fig')
+            # visualize_tsne(tsne_z_samples, tsne_scen_labels, used_dataloaders, 'dpmm_results/'+exp_time+'/cluster_fig')
 
             # eval cluster 
             # X, _ = collect_samples_for_cluster_eval(used_dataloaders, num_per_dataloader=100)
-            # _ = cluster_and_evaluate(X, dpmm, os.path.join('./results',exp_time,'eval_cluster',f'{task_id}th_clustering_results.json'))
+            # _ = cluster_and_evaluate(X, dpmm, os.path.join('./dpmm_results',exp_time,'eval_cluster',f'{task_id}th_clustering_dpmm_results.json'))
         # dpmm.save_model(os.path.join(dpmm_save_dir, str(skill_id)))
         skill_id = skill_id +1
 
     print(f"dpmm learning completed at {datetime.now()}")
     dpmm.save_model(dpmm_save_dir)
-    visualize_all_waypoints(date_dir=os.path.join('./results',exp_time))
+    visualize_all_waypoints(date_dir=os.path.join('./dpmm_results',exp_time))
 
 
 def worker_init_fn(worker_id):
@@ -133,7 +134,7 @@ if __name__ == '__main__':
     # 获取当前脚本所在目录
     script_dir = os.path.dirname(os.path.abspath(__file__))
     print("Current Working Directory:", os.getcwd())
-    dpmm_save_dir = os.path.join(script_dir, 'results', exp_time, 'dpmm_model')
+    dpmm_save_dir = os.path.join(script_dir, 'dpmm_results', exp_time, 'dpmm_model')
 
     # 获取当前脚本所在目录
     # project_root = "../../"
@@ -141,7 +142,7 @@ if __name__ == '__main__':
     #                  os.listdir(os.path.join(project_root, "b2d_1000"))]
     # data_root = "../../b2d_1000_train"
     # data_root = "../../b2d_143_train"
-    data_root = "../../b2d_mini_v2"
+    data_root = "/home/syb/b2d_mini_v2"
 
     # for d in scenario_dirs:
     #     print(d)
@@ -152,15 +153,15 @@ if __name__ == '__main__':
 
     config = GlobalConfig()
 
-    rank = int(os.environ['RANK'])  # Rank across all processes
-    if config.local_rank == -999:  # For backwards compatibility
-        local_rank = int(os.environ['LOCAL_RANK'])  # Rank on Node
-    else:
-        local_rank = int(config.local_rank)
-        world_size = int(os.environ['WORLD_SIZE'])  # Number of processes
-    print(f'RANK, LOCAL_RANK and WORLD_SIZE in environ: {rank}/{local_rank}/{world_size}')
+    # rank = int(os.environ['RANK'])  # Rank across all processes
+    # if config.local_rank == -999:  # For backwards compatibility
+    #     local_rank = int(os.environ['LOCAL_RANK'])  # Rank on Node
+    # else:
+    #     local_rank = int(config.local_rank)
+    #     world_size = int(os.environ['WORLD_SIZE'])  # Number of processes
+    # print(f'RANK, LOCAL_RANK and WORLD_SIZE in environ: {rank}/{local_rank}/{world_size}')
 
-    device = torch.device(f'cuda:{local_rank}')
+    # device = torch.device(f'cuda:{local_rank}')
 
     # assign scenario dataloaders to skill(ability) datalaoders and check
     # skill_dataloaders = {'EmergencyBrake':[], 'TrafficSign':[], 'Merging':[], 'Overtaking':[], 'GiveWay':[]}
@@ -170,12 +171,12 @@ if __name__ == '__main__':
         ability = k
         print(ability)
 
-        dataset = Ability_CARLA_Data(root=config.data_roots,
+        dataset = Ability_CARLA_Data(root=data_root,
                          config=config,
                          estimate_class_distributions=config.estimate_class_distributions,
                          estimate_sem_distribution=config.estimate_semantic_distribution,
                          shared_dict=None,
-                         rank=rank,
+                        #  rank=rank,
                          validation=False,
                          ability=ability)
         
@@ -200,7 +201,7 @@ if __name__ == '__main__':
         # "batch_size": 16,  # 批次大小
         # "learning_rate": 1e-4,  # 学习率
         "latent_dim": 2*10,  # 潜在空间维度
-        "save_dir": "results",  # 保存路径
+        "save_dir": "dpmm_results",  # 保存路径
         "gamma0": 6,  # DPMM初始参数
         "num_lap": 1000,
         "sF": 1e-5,
@@ -210,13 +211,13 @@ if __name__ == '__main__':
         "future_frame_nums":5,
     }
     # 创建保存目录（如果不存在）
-    os.makedirs('results/'+exp_time, exist_ok=True)
-    os.makedirs('results/'+exp_time+'/component_log', exist_ok=True)
-    os.makedirs('results/'+exp_time+'/track_cluster_log', exist_ok=True)
-    os.makedirs('results/'+exp_time+'/ckpt', exist_ok=True)
-    # os.makedirs(os.path.join('./results',exp_time,'eval_clustering'), exist_ok=True)
+    os.makedirs('dpmm_results/'+exp_time, exist_ok=True)
+    os.makedirs('dpmm_results/'+exp_time+'/component_log', exist_ok=True)
+    os.makedirs('dpmm_results/'+exp_time+'/track_cluster_log', exist_ok=True)
+    os.makedirs('dpmm_results/'+exp_time+'/ckpt', exist_ok=True)
+    # os.makedirs(os.path.join('./dpmm_results',exp_time,'eval_clustering'), exist_ok=True)
     # 保存 config 到 JSON 文件
-    dpmm_config_path = os.path.join('results/'+exp_time, "config.json")
+    dpmm_config_path = os.path.join('dpmm_results/'+exp_time, "config.json")
     with open(dpmm_config_path, 'w') as f:
         json.dump(dpmm_config, f, indent=4)
     print(f"Saved config to {dpmm_config_path}")
