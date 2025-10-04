@@ -49,7 +49,16 @@ class PlanningTrajectoryDecoder(nn.Module):
         self.tf_decoder = nn.TransformerDecoder(tf_layer, num_layers=cfg.tf_de_layers)
         
         # Offset prediction head (predicts corrections to anchors)
-        self.offset_head = nn.Linear(cfg.tf_de_dim, 20)
+        # self.offset_head = nn.Linear(cfg.tf_de_dim, 20)
+        self.offset_head = nn.Sequential(
+            nn.Linear(cfg.tf_de_dim, cfg.tf_de_dim//2),
+            nn.LayerNorm(cfg.tf_de_dim//2),  # Add normalization
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(cfg.tf_de_dim//2, cfg.tf_de_dim//4),
+            nn.ReLU(),
+            nn.Linear(cfg.tf_de_dim//4, 20)
+        )
         
         # Score prediction head (confidence for each trajectory)
         # FIXED: Score head with better initialization and structure
@@ -129,6 +138,14 @@ class PlanningTrajectoryDecoder(nn.Module):
         last_linear = self.score_head[-1]
         nn.init.normal_(last_linear.weight, std=0.01)
         nn.init.constant_(last_linear.bias, 0.1)  # Small positive bias
+
+        # Offset Head Initialization 
+        for m in self.offset_head.modules():
+            if isinstance(m, nn.Linear):
+                # Use Kaiming initialization since we're using ReLU
+                nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
 
     def forward(self, encoder_out):
         """
