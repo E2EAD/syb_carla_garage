@@ -142,7 +142,7 @@ if __name__ == '__main__':
     #                  os.listdir(os.path.join(project_root, "b2d_1000"))]
     # data_root = "../../b2d_1000_train"
     # data_root = "../../b2d_143_train"
-    data_root = "/home/syb/b2d_mini_v2"
+    data_root = "/media/syb/syb_disk_2/b2d_base_v3/carla_dataset"
 
     # for d in scenario_dirs:
     #     print(d)

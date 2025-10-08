@@ -217,7 +217,7 @@ class BNPModel:
         new_current_clusters = {}
         used_old_ids = set()
         assigned_new_idxs = set()
-        kl_threshold = 1.0  # Adjust based on your data scale
+        kl_threshold = 5.0  # Adjust based on your data scale
         
         for kl, new_idx, old_id in matches:
             # Skip if already assigned or KL too high

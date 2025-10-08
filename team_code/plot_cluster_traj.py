@@ -179,6 +179,7 @@ def visualize_all_waypoints(date_dir, output_dir=None):
             # Read the JSON data
             with open(json_file_path, 'r') as f:
                 components = json.load(f)
+                K = len(components)
             
             # Create the plot
             plt.figure(figsize=(12, 8))
@@ -222,8 +223,8 @@ def visualize_all_waypoints(date_dir, output_dir=None):
             # Configure plot
             plt.xlabel('X Coordinate')
             plt.ylabel('Y Coordinate')
-            plt.title(f'Waypoints Visualization - {os.path.basename(json_file_path)}')
-            plt.legend()
+            plt.title(f'Waypoints Visualization - {os.path.basename(json_file_path)} - K={K}')
+            # plt.legend()
             plt.grid(True, alpha=0.3)
             plt.axis('equal')
             plt.tight_layout()

@@ -302,6 +302,8 @@ class LidarCenterNet(nn.Module):
 
     pred_wp = None
     pred_target_speed = None
+    pred_trajectories = None 
+    pred_traj_probs = None
     pred_checkpoint = None
     attention_weights = None
     pred_wp_1 = None
