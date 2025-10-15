@@ -389,7 +389,7 @@ class LidarCenterNet(nn.Module):
           # print_data_info(scores)  # torch.Size([K, 2])
           num_anchors = scores.size(0)
           batch_size = scores.size(1)
-          pred_trajectories = pred_trajectories.reshape(num_anchors, batch_size, 10, 2)  # torch.Size([K, 2, 10, 2])
+          pred_trajectories = pred_trajectories.reshape(num_anchors, batch_size, 10, 2)  # torch.Size([K, 2, 10, 2]) here we have pred trajectories
 
           # 首先确保scores是合理的
           scores = torch.clamp(scores, min=-10.0, max=10.0)  # 限制logits范围
@@ -397,7 +397,7 @@ class LidarCenterNet(nn.Module):
           # 稳定的softmax计算
           pred_traj_logits = scores - scores.max(dim=0, keepdim=True)[0]
           pred_traj_probs = F.softmax(pred_traj_logits, dim=0)
-          pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)
+          pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)  # here we have pred traj probs
 
           if self.config.input_path_to_target_speed_network:  # 0
             ts_input = torch.cat(
@@ -777,9 +777,9 @@ class LidarCenterNet(nn.Module):
       pred_semantic=None,
       pred_bev_semantic=None,
       pred_depth=None,
-      # pred_checkpoint=None,
-      pred_trajectories = None, 
-      pred_traj_probs = None,
+      pred_checkpoint=None,
+      # pred_trajectories = None, 
+      # pred_traj_probs = None,
       pred_speed=None,
       pred_target_speed_scalar=None,
       pred_bb=None,

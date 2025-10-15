@@ -14,4 +14,3 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 
 # quiz
-1. after using mu tf decoder, it says some paras not used. find_unused_parameters=True make it right. 

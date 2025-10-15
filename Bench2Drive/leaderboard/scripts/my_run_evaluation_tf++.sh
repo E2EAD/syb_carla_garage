@@ -32,11 +32,11 @@ BASE_TM_PORT=50000
 IS_BENCH2DRIVE=True
 BASE_ROUTES=${WORK_DIR}/leaderboard/data/bench2drive220
 # TEAM_AGENT=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/sensor_agent.py
-TEAM_AGENT=${PROJECT_ROOT}/team_code/sensor_agent.py
+TEAM_AGENT=${PROJECT_ROOT}/team_code/my_sensor_agent.py
 # Must set YOUR_CKPT_PATH
 # TEAM_CONFIG=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/checkpoints/tfpp_009_ensemble_0_1_2
-TEAM_CONFIG=${PROJECT_ROOT}/pretrained_models/all_towns
-BASE_CHECKPOINT_ENDPOINT=eval_bench2drive220
+TEAM_CONFIG=${PROJECT_ROOT}/log/syb_tfpp_withB2dTrajFit_stg2
+BASE_CHECKPOINT_ENDPOINT=my_eval_bench2drive220
 PLANNER_TYPE=traj
 ALGO=tfpp
 SAVE_PATH=${WORK_DIR}/leaderboard/data/results/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
