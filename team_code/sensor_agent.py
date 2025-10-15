@@ -23,6 +23,8 @@ from data import CARLA_Data
 from nav_planner import RoutePlanner
 from nav_planner import extrapolate_waypoint_route
 
+from utils import print_data_info
+
 from filterpy.kalman import MerweScaledSigmaPoints
 from filterpy.kalman import UnscentedKalmanFilter as UKF
 from scipy.optimize import fsolve
@@ -61,6 +63,7 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
 
   def setup(self, path_to_conf_file, route_index=None, traffic_manager=None):
     """Sets up the agent. route_index is for logging purposes"""
+    print('sensor agent start to setup.')
     torch.cuda.empty_cache()
     self.IS_BENCH2DRIVE = strtobool(os.environ.get('IS_BENCH2DRIVE', 'False'))
     print('IS_BENCH2DRIVE: ', self.IS_BENCH2DRIVE)
@@ -218,6 +221,8 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
       self.save_path = None
 
     self.metric_info = {}
+
+    print('sensor agent finish setup.')
 
   def _init(self):
     # The CARLA leaderboard does not expose the lat lon reference value of the GPS which make it impossible to use the
@@ -530,6 +535,8 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
           target_point_next=tick_data['target_point_next'] if self.config.two_tp_input else None,
           ego_vel=velocity,
           command=tick_data['command'])
+
+        print_data_info(pred_checkpoint)  # (1,10,2)
         # Only convert bounding boxes when they are used.
         if self.config.detect_boxes and (compute_debug_output or self.config.backbone in ('aim') or
                                          self.stop_sign_controller):

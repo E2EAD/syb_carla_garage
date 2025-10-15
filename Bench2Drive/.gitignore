@@ -8,6 +8,8 @@ __pycache__/
 *.pyc
 *.log
 *.ckpt
+*.xml
+*.json
 
 # OS & editor files
 .DS_Store

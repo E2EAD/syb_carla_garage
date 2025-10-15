@@ -830,7 +830,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = None  # run under project root
+    self.prior_traj_path = "/home/dpc/syb/syb_carla_garage_v251013/carla_garage/team_code/dpmm_results/2025-10-05-23-57/track_cluster_log/5-0-0-2300-tracked_clusters.json"  # run under project root
     self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
 
