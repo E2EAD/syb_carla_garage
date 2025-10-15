@@ -1,8 +1,10 @@
+# need to export CARLA_ROOT=/home/dpc/djy/carla2 first
 import json
 import carla
 import argparse
 import xml.etree.ElementTree as ET
 from agents.navigation.global_route_planner import GlobalRoutePlanner
+# from global_route_planner import GlobalRoutePlanner
 import os
 import atexit
 import subprocess
@@ -123,6 +125,7 @@ def main(args):
                 current_town = route.get('town')
                 print("Loading the town:", current_town)
                 world = client.load_world(current_town)
+                time.sleep(15)
                 print("successfully load the town:", current_town)
             carla_map = world.get_map()
             grp = GlobalRoutePlanner(carla_map, 1.0)
