@@ -486,7 +486,7 @@ class GlobalConfig:
     # Weights applied to each of these losses, when combining them
     self.detailed_loss_weights = {
         # 'loss_wp': 1.0,
-        'loss_weighted_regression': 0.001,
+        'loss_weighted_regression': 0.1,
         'loss_best_trajectory': 1.0,
         'loss_kl_div': 1.0,
         'loss_target_speed': 1.0,
@@ -830,7 +830,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "/home/dpc/syb/syb_carla_garage_v251013/carla_garage/team_code/dpmm_results/2025-10-05-23-57/track_cluster_log/5-0-0-2300-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-10-09-13-37/track_cluster_log/5-0-0-31077-tracked_clusters.json"  # run under project root
     self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
 

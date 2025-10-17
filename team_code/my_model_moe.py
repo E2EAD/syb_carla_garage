@@ -21,7 +21,7 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
-from my_query_traj_decoder import PlanningTrajectoryDecoder
+from my_moe_decoder import PlanningTrajectoryDecoder
 
 
 class LidarCenterNet(nn.Module):
@@ -353,7 +353,7 @@ class LidarCenterNet(nn.Module):
         #       joined_wp_features = self.join(self.wp_query.repeat(bs, 1, 1), fused_features)
         #     pred_wp = self.wp_decoder(joined_wp_features, target_point)
         if self.config.use_controller_input_prediction:  # 0 or 1
-          if self.config.tp_attention:  # 0
+          if self.config.tp_attention:  # 1
             tp_token = self.tp_encoder(target_point)
             tp_token = tp_token + self.tp_pos_embed
             # print_data_info(tp_token)  # torch.Size([2, 256])
@@ -523,7 +523,7 @@ class LidarCenterNet(nn.Module):
       regression_losses = regression_losses.sum(dim=(-1, -2))  # (num_anchors, batch_size)
       
       # Weight each trajectory's loss by its probability
-      weighted_regression_loss = torch.sum(regression_losses * pred_traj_probs.detach()) / batch_size
+      weighted_regression_loss = torch.sum(regression_losses * soft_labels.detach()) / batch_size
       loss.update({'loss_weighted_regression': weighted_regression_loss})
 
       # BEST TRAJECTORY LOSS - Supervision for the best trajectory
