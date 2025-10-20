@@ -523,6 +523,9 @@ class LidarCenterNet(nn.Module):
       batch_size = checkpoint_label.size(0)  # B
       device = checkpoint_label.device
 
+      anchor_mu = anchor_mu.to(device)
+      anchor_var = anchor_var.to(device)
+
       # 1. Reshape anchor_mu and anchor_var from (N, 20) -> (N, 10, 2)
       anchor_mu_reshaped = anchor_mu.view(num_anchors, 10, 2)  # (N, T=10, 2)
       anchor_var_reshaped = anchor_var.view(num_anchors, 10, 2)  # (N, T=10, 2)
@@ -586,7 +589,8 @@ class LidarCenterNet(nn.Module):
       loss.update({'loss_weighted_regression': weighted_regression_loss})
 
       # BEST TRAJECTORY LOSS - Supervision for the best trajectory
-      min_distances, best_indices = torch.min(distances, dim=0)
+      # min_distances, best_indices = torch.min(distances, dim=0)
+      min_distances, best_indices = torch.min(log_likelihood, dim=0)
       best_pred_trajectories = pred_trajectories[best_indices, torch.arange(batch_size)]
       best_trajectory_loss = F.smooth_l1_loss(best_pred_trajectories, checkpoint_label)
       loss.update({'loss_best_trajectory': best_trajectory_loss })
