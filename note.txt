@@ -14,3 +14,6 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 
 # quiz
+
+#TODO
+1. for score head, change soft label calcu by using likelyhood probs

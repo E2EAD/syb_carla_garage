@@ -70,7 +70,7 @@ def train_dpmm(dpmm, config, skill_dataloaders):
                     # print(f'shape of flatten traj: {batch["flatten_trajectory_points"].detach().shape}')
                     batch_size = batch['route'].size(0)
                     # print(f'route shape: {batch["route"].shape}')
-                    flatten_route = batch['route'].detach().reshape(batch_size, -1)
+                    flatten_route = batch['route'].detach().reshape(batch_size, -1)  # here we use totai 20 checkpoints, not 10.
                     # print(f'flatten_route shape: {flatten_route.shape}')
                     current_f_traj_list.append(flatten_route)
                     if (batch_idx + 1) % dpmm_update_freq == 0:
