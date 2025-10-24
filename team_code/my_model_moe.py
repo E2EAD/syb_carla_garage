@@ -458,7 +458,7 @@ class LidarCenterNet(nn.Module):
     anchors_mu = torch.tensor(mu_list, dtype=torch.float32)
     var_list = [entry['var'][:20] for entry in data]
     anchor_var = torch.tensor(var_list, dtype=torch.float32)
-    print(f'read anchors mu and var from {anchor_path}')
+    # print(f'read anchors mu and var from {anchor_path}')
     return anchors_mu, anchor_var
 
 

@@ -830,8 +830,8 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-10-09-13-37/track_cluster_log/5-0-0-31077-tracked_clusters.json"  # run under project root
-    self.selected_ability = 'No_Scenario'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.prior_traj_path = "./team_code/dpmm_results/2025-10-09-13-37/track_cluster_log/1-0-0-1910-tracked_clusters.json"  # run under project root
+    self.selected_ability = 'Give_Way'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
 

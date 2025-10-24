@@ -164,9 +164,9 @@ if __name__ == '__main__':
     # device = torch.device(f'cuda:{local_rank}')
 
     # assign scenario dataloaders to skill(ability) datalaoders and check
-    # skill_dataloaders = {'EmergencyBrake':[], 'TrafficSign':[], 'Merging':[], 'Overtaking':[], 'GiveWay':[]}
+    skill_dataloaders = {'Emergency_Brake':[], 'Traffic_Sign':[], 'Merging':[], 'Overtaking':[], 'Give_Way':[]}
     # skill_dataloaders = {'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[], 'No_Scenario': []}
-    skill_dataloaders = { 'No_Scenario': [],'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[]}
+    # skill_dataloaders = { 'No_Scenario': [],'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[]}
 
     for k in skill_dataloaders.keys():
         ability = k

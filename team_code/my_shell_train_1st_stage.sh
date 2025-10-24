@@ -35,8 +35,8 @@ export OPENBLAS_NUM_THREADS=1  # Shuts off numpy multithreading, to avoid thread
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
-torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=syb_train_251004 --rdzv_backend=c10d \
-    team_code/my_train.py --id syb_train_251004 --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
+torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=syb_train_ability_moe_0-ns_1stg --rdzv_backend=c10d \
+    team_code/my_train_ability_moe.py --id syb_train_ability_moe_0-ns_1stg --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
     --root_dir /media/syb/syb_disk_2/b2d_base_v3/carla_dataset \
     --logdir ${PROJECT_ROOT}/log \
     --use_controller_input_prediction 0 --use_wp_gru 0 --continue_epoch 0 --cpu_cores 32 --use_depth 0 --use_semantic 0 --detect_boxes 1 --use_bev_semantic 1 \
