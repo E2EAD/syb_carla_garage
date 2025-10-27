@@ -36,8 +36,8 @@ export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
 torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=syb_train_ability_moe_0-ns_2stg --rdzv_backend=c10d \
-    team_code/my_train_ability_moe.py --id syb_train_ability_moe_1-gw_2stg --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
+    team_code/my_train_tfpp_ability.py --id ns+gw --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
     --root_dir /home/syb/b2d_mini_v2 \
     --logdir ${PROJECT_ROOT}/log \
     --use_controller_input_prediction 1 --use_wp_gru 0 --continue_epoch 0 --cpu_cores 32 --use_depth 0 --use_semantic 0 --detect_boxes 1 --use_bev_semantic 1 \
-    --image_architecture regnety_032 --lidar_architecture regnety_032 --load_file ${PROJECT_ROOT}/log/syb_train_ability_moe_0-ns_2stg/model_0030.pth
+    --image_architecture regnety_032 --lidar_architecture regnety_032 --load_file ${PROJECT_ROOT}/log/syb_tfpp_withB2dTrajFit_stg1/model_0030.pth

@@ -16,4 +16,4 @@ export HF_ENDPOINT=https://hf-mirror.com
 # quiz
 
 #TODO
-1. for score head, change soft label calcu by using likelyhood probs
+1. fix vis model in my_model*

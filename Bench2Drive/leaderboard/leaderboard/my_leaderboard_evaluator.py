@@ -90,7 +90,7 @@ class LeaderboardEvaluator(object):
     """
 
     # Tunable parameters
-    client_timeout = 600.0  # in seconds
+    client_timeout = 180.0  # in seconds
     frame_rate = 20.0      # in Hz
 
     def __init__(self, args, statistics_manager):
@@ -579,7 +579,7 @@ def main():
                         help='Run with debug output', default=0)
     parser.add_argument('--record', type=str, default='',
                         help='Use CARLA recording feature to create a recording of the scenario')
-    parser.add_argument('--timeout', default=600.0, type=float,
+    parser.add_argument('--timeout', default=180.0, type=float,
                         help='Set the CARLA client timeout value in seconds')
 
     # simulation setup
