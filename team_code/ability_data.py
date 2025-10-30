@@ -100,7 +100,7 @@ class Ability_CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-
       for ability in ability_list:
         selected_ability = ability
         selected_scenarios.extend(self.Ability.get(selected_ability, []))
-      print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
+        print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
     else:
       print('ability data need input 1 single or 1 list of abilities.')
       return

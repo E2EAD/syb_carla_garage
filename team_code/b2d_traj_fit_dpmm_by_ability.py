@@ -167,7 +167,8 @@ if __name__ == '__main__':
     skill_dataloaders = {'Emergency_Brake':[], 'Traffic_Sign':[], 'Merging':[], 'Overtaking':[], 'Give_Way':[]}
     # skill_dataloaders = {'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[], 'No_Scenario': []}
     # skill_dataloaders = { 'No_Scenario': [],'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[]}
-    skill_dataloaders = { 'No_Scenario': [],'Overtaking':[], 'Give_Way':[],  'Traffic_Sign':[], 'Merging':[],'Emergency_Brake':[]}
+    # skill_dataloaders = { 'No_Scenario': [],'Overtaking':[], 'Give_Way':[],  'Traffic_Sign':[], 'Merging':[],'Emergency_Brake':[]}
+    # skill_dataloaders = {'Merging':[]}
 
     for k in skill_dataloaders.keys():
         ability = k

@@ -22,16 +22,16 @@ BASE_PORT=30000
 BASE_TM_PORT=50000
 IS_BENCH2DRIVE=True
 BASE_ROUTES=${WORK_DIR}/leaderboard/data/bench2drive220
-TEAM_AGENT=${PROJECT_ROOT}/team_code/my_sensor_agent.py
-TEAM_CONFIG=${PROJECT_ROOT}/log/syb_train_3-m_2stg
+TEAM_AGENT=${PROJECT_ROOT}/team_code/my_moe_agent.py
+TEAM_CONFIG=${PROJECT_ROOT}/log/syb_moev15_2-m_2stg
 BASE_CHECKPOINT_ENDPOINT=my_eval_bench2drive220
 PLANNER_TYPE=my_traj
 ALGO=my_tfpp
 SAVE_PATH=${WORK_DIR}/leaderboard/data/results/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
-RESULT_PATH=ns-gw-ot-m  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+RESULT_PATH=moev15_eb-ts-m  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
-if [ ! -d "${RESULT_PATH}" ]; then
-    mkdir ${RESULT_PATH}
+if [ ! -d "${WORK_DIR}/${RESULT_PATH}" ]; then
+    mkdir ${WORK_DIR}/${RESULT_PATH}
     echo -e "\033[32m Directory ${RESULT_PATH} created. \033[0m"
 else
     echo -e "\033[32m Directory ${RESULT_PATH} already exists. \033[0m"

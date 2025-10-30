@@ -17,3 +17,16 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 #TODO
 1. fix vis model in my_model*
+2. for moe_lh may need to change the scheduler:
+'''
+scheduler = torch.optim.lr_scheduler.OneCycleLR(
+    optimizer,
+    max_lr=3e-4,
+    total_steps=num_epochs,
+    pct_start=0.3,           # 前 30% 时间用于 warmup
+    anneal_strategy='cos',
+    div_factor=10,           # warmup 从 3e-5 开始
+    final_div_factor=1000    # 最终降到 3e-7
+)
+'''
+3. ref dynMoE's way to change its MoE, fix the cluster matching in dpmm model.

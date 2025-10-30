@@ -30,7 +30,7 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_moe import LidarCenterNet
+from my_model_moe_v2 import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -117,12 +117,12 @@ def load_moe_model_checkpoint(model, checkpoint_path, device):
 
     model_state_dict = model.state_dict()
 
-    # Step 1: 过滤掉 .anchors 参数（只保留网络参数）
+    # Step 1: 过滤掉 .anchors 和 .cluster_ids 参数
     filtered_state_dict = {}
     for key, value in checkpoint_state_dict.items():
-        # print(f'checking key: {key}')
-        if key.endswith('.anchors') or 'anchors' in key and key not in model_state_dict:
-            print(f"⚠️ 跳过 anchor 数据: {key} (shape: {value.shape})")
+        if (key.endswith('.anchors') or 'anchors' in key or 
+            key.endswith('.cluster_ids') or 'cluster_ids' in key) and key not in model_state_dict:
+            print(f"⚠️ 跳过 anchor/cluster_id 数据: {key} (shape: {value.shape})")
             continue
         if key in model_state_dict:
             if model_state_dict[key].shape == value.shape:
