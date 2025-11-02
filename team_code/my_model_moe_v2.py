@@ -47,6 +47,11 @@ class LidarCenterNet(nn.Module):
     else:
       raise ValueError('The chosen vision backbone does not exist. '
                        'The options are: transFuser, aim, bev_encoder')
+    if self.config.if_freeze_tfBackbone_and_auxTaskHead:
+        # Freeze the backbone
+        print('*****Freeze the backbone*****')
+        for param in self.backbone.parameters():
+            param.requires_grad = False
 
     if self.config.use_tp:
       target_point_size = 4 if self.config.two_tp_input else 2  # 2
@@ -63,6 +68,11 @@ class LidarCenterNet(nn.Module):
     # prediction heads
     if self.config.detect_boxes:
       self.head = LidarCenterNetHead(self.config)
+    if self.config.if_freeze_tfBackbone_and_auxTaskHead:
+      # Freeze the detection head
+      print('*****Freeze the detection head*****')
+      for param in self.head.parameters():
+          param.requires_grad = False
 
     if self.config.use_semantic:
       self.semantic_decoder = t_u.PerspectiveDecoder(
@@ -73,6 +83,10 @@ class LidarCenterNet(nn.Module):
           inter_channel_2=self.config.deconv_channel_num_2,
           scale_factor_0=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_0,
           scale_factor_1=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_1)
+    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
+    #   # Freeze the BEV semantic decoder
+    #   for param in self.semantic_decoder.parameters():
+    #       param.requires_grad = False
 
     if self.config.use_bev_semantic:
       self.bev_semantic_decoder = nn.Sequential(
@@ -91,6 +105,11 @@ class LidarCenterNet(nn.Module):
           nn.Upsample(size=(self.config.lidar_resolution_height, self.config.lidar_resolution_width),
                       mode='bilinear',
                       align_corners=False))
+    if self.config.if_freeze_tfBackbone_and_auxTaskHead:
+      # Freeze the BEV semantic decoder
+      print('*****Freeze the BEV semantic decoder*****')
+      for param in self.bev_semantic_decoder.parameters():
+          param.requires_grad = False
 
       # Computes which pixels are visible in the camera. We mask the others.
       _, valid_voxels = t_u.create_projection_grid(self.config)
@@ -112,6 +131,10 @@ class LidarCenterNet(nn.Module):
           inter_channel_2=self.config.deconv_channel_num_2,
           scale_factor_0=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_0,
           scale_factor_1=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_1)
+    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
+    #   # Freeze the Depth decoder
+    #   for param in self.depth_decoder.parameters():
+    #       param.requires_grad = False
 
     if self.config.use_controller_input_prediction:
       if self.config.transformer_decoder_join:
@@ -296,7 +319,7 @@ class LidarCenterNet(nn.Module):
       target_point = torch.cat((target_point, target_point_next), axis=1)
 
     if self.config.backbone == 'transFuser':  # True
-      bev_feature_grid, fused_features, image_feature_grid = self.backbone(rgb, lidar_bev)
+      bev_feature_grid, fused_features, image_feature_grid = self.backbone(rgb, lidar_bev)  # here we get bev_feature_grid
     else:
       raise ValueError('The chosen vision backbone does not exist. '
                        'The options are: transFuser, aim, bev_encoder')

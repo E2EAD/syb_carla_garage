@@ -29,4 +29,5 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
     final_div_factor=1000    # 最终降到 3e-7
 )
 '''
-3. ref dynMoE's way to change its MoE, fix the cluster matching in dpmm model.
+3. frezze the tf++ backbone
+4. expand the score head to MoE

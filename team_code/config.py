@@ -830,8 +830,8 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-10-23-14-19/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
-    self.selected_ability = 'Give_Way'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.prior_traj_path = "./team_code/dpmm_results/2025-10-23-14-19/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
+    self.selected_ability = 'Traffic_Sign'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['Give_Way']
     self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
@@ -853,6 +853,11 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------    
     self.mini_dataset_root = '/home/syb/b2d_mini_v2'
     self.dataset_root = '/share/home/u19666033/syb/pdm_dataset'
+
+    # -----------------------------------------------------------------------------
+    # Freeze the TF bachbone and the aux task head
+    # -----------------------------------------------------------------------------  
+    self.if_freeze_tfBackbone_and_auxTaskHead = True
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():
