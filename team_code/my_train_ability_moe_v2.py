@@ -827,19 +827,24 @@ def main():
         print(f"❌ 加载失败: {e}")
         raise
 
-  if config.freeze_backbone:
+  if config.freeze_backbone:  # seems that once freeze the backbone, all the aux heads are frozen.
+    print('***** freeze backbone *****')
     model.backbone.requires_grad_(False)
 
     if config.detect_boxes:
+      print('***** freeze detect_boxes *****')
       model.head.requires_grad_(False)
 
     if config.use_semantic:
+      print('***** freeze semantic *****')
       model.semantic_decoder.requires_grad_(False)
 
     if config.use_bev_semantic:
+      print('***** freeze bev_semantic *****')
       model.bev_semantic_decoder.requires_grad_(False)
 
     if config.use_depth:
+      print('***** freeze depth *****')
       model.depth_decoder.requires_grad_(False)
 
   # Synchronizing the Batch Norms increases the Batch size with which they are compute by *num_gpus
@@ -1072,7 +1077,7 @@ class Engine(object):
 
     ego_vel = data['speed'].to(self.device, dtype=torch.float32).unsqueeze(1)
 
-    if self.config.use_twohot_target_speeds:
+    if self.config.use_twohot_target_speeds:  # 1
       target_speed = data['target_speed_twohot'].to(self.device, dtype=torch.float32)
     else:
       target_speed = data['target_speed'].to(self.device, dtype=torch.long)

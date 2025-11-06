@@ -830,7 +830,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-10-23-14-19/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Traffic_Sign'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['Give_Way']
     self.trajectory_distance_threshold = 25
@@ -855,9 +855,10 @@ class GlobalConfig:
     self.dataset_root = '/share/home/u19666033/syb/pdm_dataset'
 
     # -----------------------------------------------------------------------------
-    # Freeze the TF bachbone and the aux task head
+    # Freeze the TF bachbone and the aux task head and other options
     # -----------------------------------------------------------------------------  
-    self.if_freeze_tfBackbone_and_auxTaskHead = True
+    # self.if_freeze_tfBackbone_and_auxTaskHead = True
+    self.use_moe_to_pred_speed = True
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():

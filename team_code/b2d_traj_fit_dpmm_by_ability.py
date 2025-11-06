@@ -69,10 +69,14 @@ def train_dpmm(dpmm, config, skill_dataloaders):
                     batch = {k: v.cuda() if torch.is_tensor(v) else v for k, v in batch.items()}
                     # print(f'shape of flatten traj: {batch["flatten_trajectory_points"].detach().shape}')
                     batch_size = batch['route'].size(0)
-                    # print(f'route shape: {batch["route"].shape}')
-                    flatten_route = batch['route'].detach().reshape(batch_size, -1)  # here we use totai 20 checkpoints, not 10.
+                    # print(f'route shape: {batch["route"][:, :10, :].shape}')
+                    flatten_route = batch['route'][:, :10, :].detach().reshape(batch_size, -1)  # here we use totai 20 checkpoints, not 10.
                     # print(f'flatten_route shape: {flatten_route.shape}')
-                    current_f_traj_list.append(flatten_route)
+                    target_speed = batch['target_speed_twohot'].detach()
+                    # print_data_info(target_speed)
+                    route_and_speed = torch.concat((flatten_route,target_speed), dim=1)
+                    # print_data_info(route_and_speed)
+                    current_f_traj_list.append(route_and_speed)
                     if (batch_idx + 1) % dpmm_update_freq == 0:
                         print(f"Updating DPMM at iteration {batch_idx}...")
                         if task_id > 0 or skill_id > 0:
@@ -164,11 +168,11 @@ if __name__ == '__main__':
     # device = torch.device(f'cuda:{local_rank}')
 
     # assign scenario dataloaders to skill(ability) datalaoders and check
-    # skill_dataloaders = {'Emergency_Brake':[], 'Traffic_Sign':[], 'Merging':[], 'Overtaking':[], 'Give_Way':[]}
+    skill_dataloaders = {'Emergency_Brake':[], 'Traffic_Sign':[], 'Merging':[], 'Overtaking':[], 'Give_Way':[]}
     # skill_dataloaders = {'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[], 'No_Scenario': []}
     # skill_dataloaders = { 'No_Scenario': [],'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[]}
     # skill_dataloaders = { 'No_Scenario': [],'Overtaking':[], 'Give_Way':[],  'Traffic_Sign':[], 'Merging':[],'Emergency_Brake':[]}
-    skill_dataloaders = {'Overtaking':[]}
+    # skill_dataloaders = {'Give_Way':[]}
 
     for k in skill_dataloaders.keys():
         ability = k
@@ -203,9 +207,9 @@ if __name__ == '__main__':
         "epochs_per_task": 1,  # 每个任务训练轮数 5 may be enough
         # "batch_size": 16,  # 批次大小
         # "learning_rate": 1e-4,  # 学习率
-        "latent_dim": 2*10,  # 潜在空间维度
+        "latent_dim": 2*10+8,  # 潜在空间维度
         "save_dir": "dpmm_results",  # 保存路径
-        "gamma0": 6,  # DPMM初始参数
+        "gamma0": 0.5,  # DPMM初始参数
         "num_lap": 1000,
         "sF": 1e-5,
         # "new_task_data_ratio": 0.5,
