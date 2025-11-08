@@ -55,7 +55,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         # self._create_anchors()
         
         # Anchor embedding layer
-        self.anchor_embed = nn.Linear(20, cfg.tf_de_dim)
+        self.anchor_embed = nn.Linear(self.cfg.expert_out_dim, cfg.tf_de_dim)
         self.pos_drop = nn.Dropout(cfg.tf_de_dropout)
         
         # Transformer decoder
@@ -87,7 +87,7 @@ class PlanningTrajectoryDecoder(nn.Module):
     def _build_experts(self, num_experts):
         """构建指定数量的 experts"""
         experts = nn.ModuleList([
-            TrajectoryExpert(self.cfg.tf_de_dim, 20)
+            TrajectoryExpert(self.cfg.tf_de_dim, self.cfg.expert_out_dim)
             for _ in range(num_experts)
         ])
         self.experts = experts
@@ -100,29 +100,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         """
         if anchor_path is None:
             print('no anchor path, generate default anchors.')
-            anchors = []
-            t = np.linspace(0, 2.5, 10)  # 10 waypoints over 2.5 seconds
-
-            # 1. Straight trajectories (different speeds)
-            for speed in [3.0, 5.0, 7.0]:
-                x = t * speed
-                y = np.zeros_like(t)
-                anchors.append(np.stack([x, y], axis=1).flatten())
-
-            # 2. Left turns (different curvatures)
-            for curve in [0.5, 1.0, 1.5]:
-                x = t * 5.0
-                y = curve * (t ** 2) / 2
-                anchors.append(np.stack([x, y], axis=1).flatten())
-
-            # 3. Right turns (different curvatures)
-            for curve in [0.5, 1.0, 1.5]:
-                x = t * 5.0
-                y = -curve * (t ** 2) / 2
-                anchors.append(np.stack([x, y], axis=1).flatten())
-
-            anchors_tensor = torch.tensor(anchors, dtype=torch.float32)
-            self.num_anchors = anchors_tensor.size(0)
+            return
 
         else:
             with open(anchor_path, 'r') as f:
@@ -133,7 +111,7 @@ class PlanningTrajectoryDecoder(nn.Module):
             mu_list = []
             for entry in data:
                 cluster_ids.append(entry['cluster_id'])
-                mu_list.append(entry['mu'][:20])  # First 20 elements for 10 waypoints
+                mu_list.append(entry['mu'][:28])  # First 20 elements for 10 waypoints, next 8 for speed
             
             anchors_tensor = torch.tensor(mu_list, dtype=torch.float32)
             self.num_anchors = anchors_tensor.size(0)
@@ -194,7 +172,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         
         # Prepare anchor queries: (num_anchors, batch_size, 20) -> (num_anchors, batch_size, dim)
         anchors_expanded = self.anchors.unsqueeze(1).expand(-1, batch_size, -1)
-        # print_data_info(anchors_expanded)  #  torch.Size([99, 2, 20])
+        # print_data_info(anchors_expanded)  #  torch.Size([99, 2, 28])
         query = self.anchor_embed(anchors_expanded)
         query = self.pos_drop(query)
         
@@ -231,15 +209,20 @@ class PlanningTrajectoryDecoder(nn.Module):
             chunk_outputs = torch.stack(chunk_outputs, dim=0)
             all_outputs.append(chunk_outputs)
 
+        all_outputs_tensor =  torch.cat(all_outputs, dim=0)  # (99,2,28)
+        # print_data_info(all_outputs_tensor)
         
-        traj_offsets = torch.cat(all_outputs[:,:,:20], dim=0)
-        print_data_info(traj_offsets)
+        traj_offsets = all_outputs_tensor[:,:,:20]  # (99,2,20)
+        # print_data_info(traj_offsets)
 
-        pred_speeds = torch.cat(all_outputs[:,:,20:], dim=0)
-        print_data_info(pred_speeds)
+        pred_speed_offsets = all_outputs_tensor[:,:,20:]  # (99,2,8)
+        # print_data_info(pred_speed_offsets)
         
-        pred_trajectories = anchors_expanded + traj_offsets
-        print_data_info(pred_trajectories)
+        pred_trajectories = anchors_expanded[:,:,:20] + traj_offsets  # (99,2,20)
+        # print_data_info(pred_trajectories)
+
+        pred_speeds = anchors_expanded[:,:,20:] + pred_speed_offsets  # (99,2,8)
+        # print_data_info(pred_speeds)
 
         scores = self.score_head(decoder_out).squeeze(-1)  # (num_anchors, batch_size)
         
@@ -338,7 +321,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         for i, current_cluster_id in enumerate(current_cluster_ids):
             if current_cluster_id in ckpt_cluster_to_params:
                 # Load existing expert
-                expert = TrajectoryExpert(self.cfg.tf_de_dim, 20).to(device)
+                expert = TrajectoryExpert(self.cfg.tf_de_dim, self.cfg.expert_out_dim).to(device)
                 expert_sd = ckpt_cluster_to_params[current_cluster_id]
                 
                 try:
@@ -399,7 +382,7 @@ class PlanningTrajectoryDecoder(nn.Module):
 
     def _create_expert_with_avg(self, avg_state, device):
         """Create expert with average parameters"""
-        expert = TrajectoryExpert(self.cfg.tf_de_dim, 20).to(device)
+        expert = TrajectoryExpert(self.cfg.tf_de_dim, self.cfg.expert_out_dim).to(device)
         
         if avg_state:
             try:
@@ -446,7 +429,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         num_load = min(ckpt_num_anchors, current_num_anchors)
 
         for i in range(num_load):
-            expert = TrajectoryExpert(self.cfg.tf_de_dim, 20)
+            expert = TrajectoryExpert(self.cfg.tf_de_dim, self.cfg.expert_out_dim)
             expert = expert.to(device)
             
             # Extract parameters for expert i
@@ -503,7 +486,7 @@ class PlanningTrajectoryDecoder(nn.Module):
 
             # Create new experts with average initialization
             for i in range(ckpt_num_anchors, current_num_anchors):
-                new_expert = TrajectoryExpert(self.cfg.tf_de_dim, 20)
+                new_expert = TrajectoryExpert(self.cfg.tf_de_dim, self.cfg.expert_out_dim)
                 new_expert = new_expert.to(device)
                 
                 if avg_state:

@@ -141,16 +141,16 @@ class LidarCenterNet(nn.Module):
         ts_input_channel = self.config.gru_input_size
       else:
         ts_input_channel = self.config.gru_hidden_size
-      if not self.config.use_moe_to_pred_speed:
-        if self.config.input_path_to_target_speed_network:  
-            extra_dimensions = 2 * self.config.predict_checkpoint_len
-            self.target_speed_network = nn.Sequential(
-                nn.Linear(ts_input_channel + extra_dimensions, ts_input_channel + extra_dimensions), nn.ReLU(inplace=True),
-                nn.Linear(ts_input_channel + extra_dimensions, len(config.target_speeds)))
-        else:
-            print('using shared speed head.')
-            self.target_speed_network = nn.Sequential(nn.Linear(ts_input_channel, ts_input_channel), nn.ReLU(inplace=True),
-                                                    nn.Linear(ts_input_channel, len(config.target_speeds)))
+    #   if not self.config.use_moe_to_pred_speed:
+    #     if self.config.input_path_to_target_speed_network:  # False
+    #         extra_dimensions = 2 * self.config.predict_checkpoint_len
+    #         self.target_speed_network = nn.Sequential(
+    #             nn.Linear(ts_input_channel + extra_dimensions, ts_input_channel + extra_dimensions), nn.ReLU(inplace=True),
+    #             nn.Linear(ts_input_channel + extra_dimensions, len(config.target_speeds)))
+    #     else:
+    #         print('using shared speed head.')
+    #         self.target_speed_network = nn.Sequential(nn.Linear(ts_input_channel, ts_input_channel), nn.ReLU(inplace=True),
+    #                                                 nn.Linear(ts_input_channel, len(config.target_speeds)))
 
     if self.config.use_controller_input_prediction or self.config.use_wp_gru:
       if self.config.transformer_decoder_join:
@@ -426,14 +426,15 @@ class LidarCenterNet(nn.Module):
           pred_traj_probs = F.softmax(pred_traj_logits, dim=0)
           pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)  # here we have pred traj probs
 
-          if not self.config.use_moe_to_pred_speed:
-            if self.config.input_path_to_target_speed_network:  # 0
-                ts_input = torch.cat(
-                    (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
-                pred_target_speed = self.target_speed_network(ts_input)
-            else:
-                pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
-                # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+        #   if not self.config.use_moe_to_pred_speed:
+        #     if self.config.input_path_to_target_speed_network:  # 0
+        #         ts_input = torch.cat(
+        #             (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
+        #         # pred_target_speed = self.target_speed_network(ts_input)
+        #     else:
+        #         pass
+        #         # pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
+        #         # print_data_info(pred_target_speed)  # torch.Size([2, 8])
 
       else:
         joined_features = self.join(fused_features)
@@ -448,9 +449,10 @@ class LidarCenterNet(nn.Module):
           if self.config.input_path_to_target_speed_network:  # 0
             ts_input = torch.cat(
                 (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
-            pred_target_speed = self.target_speed_network(ts_input)
+            # pred_target_speed = self.target_speed_network(ts_input)
           else:
-            pred_target_speed = self.target_speed_network(target_speed_features) 
+            # pred_target_speed = self.target_speed_network(target_speed_features) 
+            pass
             
 
     # Auxiliary tasks
@@ -512,9 +514,9 @@ class LidarCenterNet(nn.Module):
 
     # anchor_mu, anchor_var = self.load_anchor_mu_and_var(self.config.prior_traj_path)
 
-    if self.config.use_controller_input_prediction and not self.config.use_moe_to_pred_speed:
-      loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
-      loss.update({'loss_target_speed': loss_target_speed})
+    if self.config.use_controller_input_prediction:
+    #   loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
+    #   loss.update({'loss_target_speed': loss_target_speed})
 
       # loss_wp = torch.mean(torch.abs(pred_checkpoint - checkpoint_label))
       # loss.update({'loss_checkpoint': loss_wp})
@@ -578,10 +580,9 @@ class LidarCenterNet(nn.Module):
       best_trajectory_loss = F.smooth_l1_loss(best_pred_trajectories, checkpoint_label)
       loss.update({'loss_best_trajectory': best_trajectory_loss })
 
-      if self.config.use_moe_to_pred_speed:
-        best_pred_speed = pred_speeds[best_indices, torch.arange(batch_size)]
-        loss_target_speed = self.loss_speed(best_pred_speed, target_speed_label)
-        loss.update({'loss_target_speed': loss_target_speed})
+      best_pred_speed = pred_speeds[best_indices, torch.arange(batch_size)]
+      loss_target_speed = self.loss_speed(best_pred_speed, target_speed_label)
+      loss.update({'loss_target_speed': loss_target_speed})
 
     if self.config.use_semantic:
       loss_semantic = self.loss_semantic(pred_semantic, semantic_label)
