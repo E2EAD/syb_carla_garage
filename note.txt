@@ -14,6 +14,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 
 # quiz
+1.MoEv1.7 suffer long time calculating box essembles. ban it for test currently (in my_moe_agent_v2.py)
 
 # note
 1.MoEv1.6: A strict anchorID-offsetExpert matching MoE, with score head's soft label comes from distance. Use my_moe_decoder_v2. 
@@ -36,6 +37,5 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
     final_div_factor=1000    # 最终降到 3e-7
 )
 '''
-3. use distill loss to supervise score head (score_kl_div, only the same id anchors)
-4. MoEv1.6 lacks agent.py.
-5. Use GRU as traj expert.
+3. use distill loss to supervise score head (score_kl_div, only the same id anchors), or stop updating early.
+4. freeze bb might be too agreesive, try use pre-trained bb and low aux task loss weights or freeze after eb.

@@ -524,13 +524,45 @@ class LidarCenterNet(nn.Module):
       # use distance to calcu soft label 
       num_anchors = pred_traj_probs.size(0)
       batch_size = pred_traj_probs.size(1)
-      # 计算距离（添加数值稳定性）
+    #   # 计算距离（添加数值稳定性）
+    #   with torch.no_grad():
+    #       # print_data_info(checkpoint_label)  # torch.Size([2, 10, 2])
+    #       distances = torch.norm(
+    #           pred_trajectories - checkpoint_label.unsqueeze(0), 
+    #           dim=-1
+    #       ).sum(dim=-1)  # (num_anchors, batch_size)
+    #       batch_size = distances.size(1)
+          
+    #       # 添加距离裁剪，避免极端值
+    #       distances = torch.clamp(distances, min=1e-6, max=100.0)
+
+    #   # 3. 创建软标签（修复数值稳定性）
+    #   with torch.no_grad():
+    #       # 使用稳定的softmax计算
+    #       neg_distances = -distances / self.config.temperature
+    #       # 减去最大值提高数值稳定性
+    #       neg_distances = neg_distances - neg_distances.max(dim=0, keepdim=True)[0]
+    #       soft_labels = F.softmax(neg_distances, dim=0)
+          
+    #       # 确保概率分布有效
+    #       soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+
       with torch.no_grad():
-          # print_data_info(checkpoint_label)  # torch.Size([2, 10, 2])
+          # print_data_info(checkpoint_label)  # torch.Size([2, 10, 2])  pred_trajectories: [num_anchor, 2, 10, 2]
+          pred_trajectories_flatten = pred_trajectories.reshape(num_anchors, batch_size, -1)
+          print_data_info(pred_trajectories_flatten)  # torch.Size([99, 2, 20])
+          print_data_info(pred_speeds)  # torch.Size([99, 2, 8])
+          pred_traj_speed = torch.concat((pred_trajectories_flatten, pred_speeds), dim = -1)
+          print_data_info(pred_traj_speed)
+          checkpoint_label_flatten = checkpoint_label.reshape(batch_size, -1)
+          print_data_info(checkpoint_label_flatten)  # torch.Size([2, 20])
+          checkpoint_speed =  torch.concat((checkpoint_label_flatten, target_speed_label), dim=-1)
+          print_data_info(checkpoint_speed)
           distances = torch.norm(
-              pred_trajectories - checkpoint_label.unsqueeze(0), 
+              pred_traj_speed  - checkpoint_speed.unsqueeze(0), 
               dim=-1
-          ).sum(dim=-1)  # (num_anchors, batch_size)
+          )  # (num_anchors, batch_size)
+          print_data_info(distances)
           batch_size = distances.size(1)
           
           # 添加距离裁剪，避免极端值

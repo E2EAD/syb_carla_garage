@@ -168,11 +168,11 @@ if __name__ == '__main__':
     # device = torch.device(f'cuda:{local_rank}')
 
     # assign scenario dataloaders to skill(ability) datalaoders and check
-    skill_dataloaders = {'Emergency_Brake':[], 'Traffic_Sign':[], 'Merging':[], 'Overtaking':[], 'Give_Way':[]}
+    # skill_dataloaders = {'Emergency_Brake':[], 'Traffic_Sign':[], 'Merging':[], 'Overtaking':[], 'Give_Way':[]}
     # skill_dataloaders = {'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[], 'No_Scenario': []}
     # skill_dataloaders = { 'No_Scenario': [],'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[]}
     # skill_dataloaders = { 'No_Scenario': [],'Overtaking':[], 'Give_Way':[],  'Traffic_Sign':[], 'Merging':[],'Emergency_Brake':[]}
-    # skill_dataloaders = {'Give_Way':[]}
+    skill_dataloaders = {'Merging':[]}
 
     for k in skill_dataloaders.keys():
         ability = k
@@ -203,7 +203,7 @@ if __name__ == '__main__':
     dpmm_config = {
         # "dpmm_update_freq": 10,  # DPMM更新间隔
         # "dpmm_update_every_epoch": True,  # DPMM更新间隔
-        "dpmm_update_per_epoch": 1,  # DPMM更新间隔
+        "dpmm_update_per_epoch": 2,  # DPMM更新间隔
         "epochs_per_task": 1,  # 每个任务训练轮数 5 may be enough
         # "batch_size": 16,  # 批次大小
         # "learning_rate": 1e-4,  # 学习率
