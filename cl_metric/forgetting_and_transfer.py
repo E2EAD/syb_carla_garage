@@ -170,7 +170,7 @@ if __name__ == '__main__':
     df = df.sort_values(['Task', 'Metric'])
 
     # 保存结果到CSV
-    df.to_csv('driving_skills_metrics.csv', index=False)
+    # df.to_csv('driving_skills_metrics.csv', index=False)
 
     # 打印详细结果
     print("\n===== 详细指标结果 =====")
@@ -201,4 +201,4 @@ if __name__ == '__main__':
         value_str = f"{value:.4f}" if not np.isnan(value) else "NaN"
         print(f"  {task_name}: {value_str}")
 
-    print("\n详细结果已保存至 'driving_skills_metrics.csv'")
+    # print("\n详细结果已保存至 'driving_skills_metrics.csv'")
