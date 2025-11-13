@@ -203,13 +203,13 @@ if __name__ == '__main__':
     dpmm_config = {
         # "dpmm_update_freq": 10,  # DPMM更新间隔
         # "dpmm_update_every_epoch": True,  # DPMM更新间隔
-        "dpmm_update_per_epoch": 2,  # DPMM更新间隔
+        "dpmm_update_per_epoch": 3,  # DPMM更新间隔
         "epochs_per_task": 1,  # 每个任务训练轮数 5 may be enough
         # "batch_size": 16,  # 批次大小
         # "learning_rate": 1e-4,  # 学习率
         "latent_dim": 2*10+8,  # 潜在空间维度
         "save_dir": "dpmm_results",  # 保存路径
-        "gamma0": 5,  # DPMM初始参数
+        "gamma0": 100,  # DPMM初始参数
         "num_lap": 1000,
         "sF": 1e-5,
         # "new_task_data_ratio": 0.5,
