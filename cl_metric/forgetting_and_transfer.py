@@ -115,11 +115,11 @@ def calculate_metrics(skill_matrix, learning_order):
 
 if __name__ == '__main__':
     # 假设您已经将表格读取为numpy数组
-    skill_matrix = [[43.75, 15.56, 71.67, 50, 68.95],
-                    [46.25,15.56,81.67,40,80],
-                    [50,15.56,51.67,60,75.26],
-                    [45,31.11,31.67,60,63.68],
-                    [22.5,13.33,20,40,45.79]]
+    skill_matrix = [[42.5,20,75,30,69.74],
+                    [37.18,11.11,71.67,40,76.06],
+                    [55.69,8.89,60,50,80],
+                    [40.51,46.67,28.33,50,62.23],
+                    [27.5,15.56,16.67,50,45.26]]
 
     skill_matrix = np.array(skill_matrix)  # 您的实际数据
     learning_order = ['EmergencyBrake', 'TrafficSign', 'Merging', 'Overtaking', 'GiveWay']

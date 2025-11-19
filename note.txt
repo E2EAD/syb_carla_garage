@@ -15,6 +15,8 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 # quiz
 1.MoEv1.7 suffer long time calculating box essembles. ban it for test currently (in my_moe_agent_v2.py)
+2.need traj to be 10 different tokens in jit?
+3.how the pred probs are calcuated? 
 
 # note
 1.MoEv1.6: A strict anchorID-offsetExpert matching MoE, with score head's soft label comes from distance. Use my_moe_decoder_v2. 

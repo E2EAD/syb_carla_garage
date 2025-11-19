@@ -490,6 +490,12 @@ class GlobalConfig:
         'loss_best_trajectory': 1.0,
         'loss_kl_div': 1.0,
         'loss_target_speed': 1.0,
+        'diffusion_loss_velocity': 1,
+        'diffusion_loss_traj_recon': 1,
+        'diffusion_loss_speed_recon': 1,
+        'diffusion_loss_selection': 1,
+        # 'diffusion_loss_total': 1,
+        'loss_semantic': 0.4,
         'loss_checkpoint': 1.0,
         'loss_semantic': 1.0,
         'loss_bev_semantic': 1.0,
@@ -832,9 +838,9 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-09-08-59/track_cluster_log/4-0-0-1909-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Emergency_Brake'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
-    self.selected_ability_list = ['Give_Way']
+    self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
 
@@ -871,6 +877,30 @@ class GlobalConfig:
     self.task_encoder_hidden_dims = [1024, 512, 256]  # VAE编码器的隐藏层维度
     self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
     self.task_encoder_temperature = 0.1  # softmax温度参数
+
+    # -----------------------------------------------------------------------------
+    # JiT denoiser
+    # -----------------------------------------------------------------------------  
+    # 扩散模型参数
+    # self.num_anchors = 10  # anchor数量
+    self.denoiser_depth = 12  # Transformer层数
+    self.label_drop_prob = 0.1  # CFG标签丢弃概率
+    self.P_mean = -1.2  # 时间步分布参数
+    self.P_std = 1.2
+    self.t_eps = 1e-3
+    self.noise_scale = 1.0
+    self.proj_dropout = 0.0
+    self.num_denoiser_heads = 8
+    self.denoiser_mlp_ratio = 4.0
+    self.attn_dropout = 0.0
+
+    # JiT's 损失权重
+    self.velocity_weight = 1.0
+    self.traj_weight = 1.0
+    self.speed_weight = 1.0  
+    self.selection_weight = 1.0
+
+    # self.denoiser_training = True
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():
