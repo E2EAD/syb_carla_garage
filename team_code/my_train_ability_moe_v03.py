@@ -30,7 +30,7 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_moe_v0 import LidarCenterNet
+from my_model_moe_v03 import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -904,7 +904,8 @@ class Engine(object):
       pred_wp,\
       pred_target_speed,\
       pred_trajectories, \
-      pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features,  \
+      pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, \
+      sample_checkpoint_label, sample_pred_trajectories, sample_pred_traj_probs, \
       pred_semantic, \
       pred_bev_semantic, \
       pred_depth, \
@@ -934,11 +935,14 @@ class Engine(object):
     else:
       losses = compute_loss(pred_wp=pred_wp,
                             pred_target_speed=pred_target_speed,
-                            pred_trajectories = pred_trajectories, 
+                            pred_trajectories = pred_trajectories,
                             pred_traj_probs = pred_traj_probs,
                             task_latent_mu = task_latent_mu, 
                             task_latent_log_var = task_latent_log_var, 
-                            reconstructed_features = reconstructed_features, 
+                            reconstructed_features = reconstructed_features,  
+                            sample_checkpoint_label = sample_checkpoint_label, 
+                            sample_pred_trajectories = sample_pred_trajectories, 
+                            sample_pred_traj_probs = sample_pred_traj_probs,
                             pred_semantic=pred_semantic,
                             pred_bev_semantic=pred_bev_semantic,
                             pred_depth=pred_depth,

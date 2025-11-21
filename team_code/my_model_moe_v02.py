@@ -490,6 +490,31 @@ class LidarCenterNet(nn.Module):
     anchor_var = torch.tensor(var_list, dtype=torch.float32)
     # print(f'read anchors mu and var from {anchor_path}')
     return anchors_mu, anchor_var
+  
+  # def _compute_anchor_distances(self, gt_combined):
+  #   """计算到每个anchor的距离"""
+  #   # gt_combined: (B, 28)
+  #   # anchors: (num_anchors, 28)
+    
+  #   # 可以加权不同部分（轨迹vs速度）
+  #   trajectory_weight = 1.0
+  #   speed_weight = 1
+    
+  #   # 计算加权距离
+  #   trajectory_dist = F.pairwise_distance(
+  #       gt_combined[:, :self.trajectory_dim].unsqueeze(1),
+  #       self.anchors[:, :self.trajectory_dim].unsqueeze(0),
+  #       p=1
+  #   )  # (B, num_anchors)
+    
+  #   speed_dist = F.pairwise_distance(
+  #       gt_combined[:, self.trajectory_dim:].unsqueeze(1),
+  #       self.anchors[:, self.trajectory_dim:].unsqueeze(0),
+  #       p=1
+  #   )  # (B, num_anchors)
+    
+  #   total_dist = trajectory_weight * trajectory_dist + speed_weight * speed_dist
+  #   return total_dist
 
 
   def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_speeds, pred_semantic, pred_bev_semantic, pred_depth,

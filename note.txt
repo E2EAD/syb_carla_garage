@@ -40,4 +40,4 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
 )
 '''
 3. use distill loss to supervise score head (score_kl_div, only the same id anchors), or stop updating early.
-4. freeze bb might be too agreesive, try use pre-trained bb and low aux task loss weights or freeze after eb.
+4. fix MoEv02's distance calcu, update its agent for testing.

@@ -490,11 +490,14 @@ class GlobalConfig:
         'loss_best_trajectory': 1.0,
         'loss_kl_div': 1.0,
         'loss_target_speed': 1.0,
-        'diffusion_loss_velocity': 1,
-        'diffusion_loss_traj_recon': 1,
-        'diffusion_loss_speed_recon': 1,
-        'diffusion_loss_selection': 1,
+        # 'diffusion_loss_velocity': 1,
+        # 'diffusion_loss_traj_recon': 1,
+        # 'diffusion_loss_speed_recon': 1,
+        # 'diffusion_loss_selection': 1,
         # 'diffusion_loss_total': 1,
+        'sample_loss_weighted_regression': 0.01,
+        'sample_loss_best_trajectory': 1.0,
+        'sample_loss_kl_div': 1.0,
         'loss_semantic': 0.4,
         'loss_checkpoint': 1.0,
         'loss_semantic': 1.0,
@@ -838,7 +841,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-09-08-59/track_cluster_log/4-0-0-1909-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Emergency_Brake'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     self.trajectory_distance_threshold = 25
@@ -877,6 +880,9 @@ class GlobalConfig:
     self.task_encoder_hidden_dims = [1024, 512, 256]  # VAE编码器的隐藏层维度
     self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
     self.task_encoder_temperature = 0.1  # softmax温度参数
+
+    self.detach_fuse_feat = True
+    self.sample_from_vae = True
 
     # -----------------------------------------------------------------------------
     # JiT denoiser

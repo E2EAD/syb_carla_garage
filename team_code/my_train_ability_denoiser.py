@@ -551,7 +551,7 @@ def main():
       config.detailed_loss_weights[k] = config.detailed_loss_weights[k] * factor
 
   # Data, configures config. Create before the model
-  train_set = Ability_CARLA_Data(root=config.mini_dataset_root,
+  train_set = Ability_CARLA_Data(root=config.dataset_root,
                          config=config,
                          estimate_class_distributions=config.estimate_class_distributions,
                          estimate_sem_distribution=config.estimate_semantic_distribution,

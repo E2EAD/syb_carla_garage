@@ -69,7 +69,7 @@ class TrajectoryDenoiser(nn.Module):
             nn.Linear(perception_dim, perception_dim//2),
             nn.GELU(),
             nn.Dropout(config.proj_dropout),
-            nn.Linear(perception_dim//2, self.num_anchors)
+            nn.Linear(perception_dim//2, 1)
         )
         
         # 最终归一化层
@@ -176,100 +176,151 @@ class TrajectoryDenoiser(nn.Module):
             return self._forward_inference(perception_feat, bs)
 
     def _forward_training(self, perception_feat, gt_trajectories, gt_speeds, bs):
-        """训练阶段 - 采用原版策略"""
+        """修改后的训练阶段 - 使用所有anchor"""
         device = perception_feat.device
         
-        # 组合真实数据
+        # 组合真实数据 (B, 28)
         gt_combined = torch.cat([
-            gt_trajectories.reshape(bs, -1),  # (B, 20)
-            gt_speeds  # (B, 8)
-        ], dim=1)  # (B, 28)
+            gt_trajectories.reshape(bs, -1),
+            gt_speeds
+        ], dim=1)
         
-        # 找到最近anchor并采样
-        with torch.no_grad():
-            closest_anchor_idx = self._find_closest_anchor(gt_combined)
-        initial_trajectory = self.sample_from_anchor(closest_anchor_idx, training=True)
+        # 为每个anchor生成噪声轨迹
+        all_noisy_trajectories = []
+        for anchor_idx in range(self.num_anchors):
+            # 从每个anchor采样初始轨迹
+            initial_trajectory = self.sample_from_anchor_batch(anchor_idx, bs, training=True)
+            all_noisy_trajectories.append(initial_trajectory)
         
-        # 扩散过程
-        t = self.sample_t(bs, device=device).view(bs, 1)
-        noise = torch.randn_like(initial_trajectory) * self.noise_scale
-        noisy_trajectory = t * initial_trajectory + (1 - t) * noise
+        # 形状: (num_anchors, B, 28) -> (B, num_anchors, 28)
+        initial_trajectories = torch.stack(all_noisy_trajectories).transpose(0, 1)
         
-        # 计算真实速度场（关键步骤）
-        v_target = (gt_combined - noisy_trajectory) / (1 - t).clamp_min(self.t_eps)
+        # 扩散过程 - 对所有anchor同时加噪
+        t = self.sample_t(bs, device=device).view(bs, 1, 1)  # (B, 1, 1)
+        noise = torch.randn_like(initial_trajectories) * self.noise_scale
         
-        # 网络预测
-        perception_emb = self.perception_encoder(perception_feat.mean(dim=1))
-        t_emb = self.t_embedder(t.squeeze(1))
-        condition = perception_emb + t_emb
+        # 加噪: (B, num_anchors, 28)
+        noisy_trajectories = t * initial_trajectories + (1 - t) * noise
         
-        x = self.trajectory_embed(noisy_trajectory).unsqueeze(1)
+        # 计算真实速度场
+        v_target = (gt_combined.unsqueeze(1) - noisy_trajectories) / (1 - t).clamp_min(self.t_eps)
+        
+        # 网络预测 - 处理所有anchor
+        perception_emb = self.perception_encoder(perception_feat.mean(dim=1))  # (B, 256)
+        t_emb = self.t_embedder(t.squeeze(1))  # (B, 256)
+        condition = perception_emb + t_emb  # (B, 256)
+        
+        # 重塑输入: (B * num_anchors, 28)
+        batch_anchor_trajectories = noisy_trajectories.reshape(bs * self.num_anchors, -1)
+        
+        # 扩展条件: (B * num_anchors, 256)
+        expanded_condition = condition.unsqueeze(1).expand(-1, self.num_anchors, -1).reshape(bs * self.num_anchors, -1)
+        
+        # 网络前向
+        x = self.trajectory_embed(batch_anchor_trajectories).unsqueeze(1)
         for block in self.blocks:
-            x = block(x, condition, feat_rope=None)
+            x = block(x, expanded_condition, feat_rope=None)
         
         x = self.norm_final(x)
-        reconstruction = self.reconstruction_head(x.squeeze(1))
-        selection_logits = self.selection_head(x.squeeze(1))
+        x_features = x.squeeze(1)  # (B*K, 256) - 只squeeze一次
+        reconstruction = self.reconstruction_head(x_features)  # (B*K, 28)
+        selection_logits = self.selection_head(x_features)     # (B*K, 1) ✅ 每个anchor一个分数
         
-        # 计算预测速度场（关键步骤）
-        v_pred = (reconstruction - noisy_trajectory) / (1 - t).clamp_min(self.t_eps)
+        # 计算预测速度场
+        v_pred = (reconstruction - batch_anchor_trajectories) / (1 - t.repeat(1, self.num_anchors, 1).reshape(bs * self.num_anchors, 1)).clamp_min(self.t_eps)
         
-        # 分离输出
-        pred_trajectories = reconstruction[:, :self.trajectory_dim].reshape(bs, 10, 2)
-        pred_speeds = reconstruction[:, self.trajectory_dim:]
-        selection_probs = F.softmax(selection_logits, dim=-1)
+        # 重塑输出
+        reconstruction = reconstruction.reshape(bs, self.num_anchors, -1)        # (B, K, 28)
+        selection_logits = selection_logits.reshape(bs, self.num_anchors)         # (B, K) ✅
+        v_pred = v_pred.reshape(bs, self.num_anchors, -1)                        # (B, K, 28)
+        
+        # 分离轨迹和速度
+        pred_trajectories = reconstruction[:, :, :self.trajectory_dim].reshape(bs, self.num_anchors, 10, 2)  # (B, K, 10, 2)
+        pred_speeds = reconstruction[:, :, self.trajectory_dim:]  # (B, K, 8)
+        
+        # 选择概率 - 在K个anchor之间做softmax
+        selection_probs = F.softmax(selection_logits, dim=-1)  # (B, K) ✅
         
         return pred_trajectories, pred_speeds, selection_probs, v_pred, v_target
     
-    def _forward_inference(self, perception_feat, bs):
-        """推理阶段前向传播 - 对每个anchor并行生成"""
-        device = perception_feat.device
-        all_trajectories = []
-        all_speeds = []
-        all_scores = []
+    def sample_from_anchor_batch(self, anchor_idx, batch_size, training=True):
+        """为整个batch采样指定anchor的轨迹"""
+        if training:
+            # 训练时添加噪声
+            mean = self.anchors[anchor_idx].unsqueeze(0).expand(batch_size, -1)  # (B, 28)
+            std = self.anchor_vars[anchor_idx].sqrt().unsqueeze(0).expand(batch_size, -1)  # (B, 28)
+            return mean + std * torch.randn_like(mean)
+        else:
+            # 推理时直接用均值
+            return self.anchors[anchor_idx].unsqueeze(0).expand(batch_size, -1)
+    
+    def _ode_solver(self, initial_state, perception_emb, steps=10):
+        """完整的ODE求解器"""
+        device = initial_state.device
+        z = initial_state
+        timesteps = torch.linspace(0.0, 1.0, steps+1, device=device)
         
-        # 聚合感知特征
-        perception_emb = self.perception_encoder(perception_feat.mean(dim=1))  # (B, 256)
-        
-        # 对每个anchor进行生成
-        for anchor_idx in range(self.num_anchors):
-            # 从anchor采样初始状态（推理时用均值）
-            initial_state = self.sample_from_anchor(
-                torch.tensor([anchor_idx] * bs, device=device), 
-                training=False
-            )  # (B, 28)
+        # Euler方法求解ODE
+        for i in range(steps):
+            t = timesteps[i].view(1, 1)
+            t_next = timesteps[i+1].view(1, 1)
             
-            # ODE去噪过程（简化版 - 单步预测）
-            # 这里使用t=0.5作为示例，实际应该使用完整ODE求解
-            t = torch.ones(bs, 1, device=device) * 0.5
+            # 计算速度场
             t_emb = self.t_embedder(t.squeeze(1))
             condition = perception_emb + t_emb
             
-            # 通过网络
-            x = self.trajectory_embed(initial_state).unsqueeze(1)
+            x = self.trajectory_embed(z).unsqueeze(1)
             for block in self.blocks:
                 x = block(x, condition, feat_rope=None)
             
             x = self.norm_final(x)
             reconstruction = self.reconstruction_head(x.squeeze(1))
-            selection_logits = self.selection_head(x.squeeze(1))
+            v_pred = (reconstruction - z) / (1 - t).clamp_min(self.t_eps)
             
-            # 分离输出
-            traj = reconstruction[:, :self.trajectory_dim].reshape(bs, 10, 2)  # (B, 10, 2)
-            speed = reconstruction[:, self.trajectory_dim:]  # (B, 8)
-            score = selection_logits[:, anchor_idx]  # (B,)
+            # ODE更新
+            z = z + (t_next - t) * v_pred
+        
+        return z
+
+    def _forward_inference(self, perception_feat, bs):
+        """修复后的推理 - 完整ODE求解"""
+        device = perception_feat.device
+        all_trajectories = []
+        all_speeds = []
+        all_scores = []
+        
+        perception_emb = self.perception_encoder(perception_feat.mean(dim=1))
+        
+        for anchor_idx in range(self.num_anchors):
+            # 完整ODE求解
+            initial_state = self.anchors[anchor_idx].unsqueeze(0).expand(bs, -1)
+            final_state = self._ode_solver(initial_state, perception_emb, steps=10)
+            
+            # 计算选择分数
+            x = self.trajectory_embed(final_state).unsqueeze(1)
+            for block in self.blocks:
+                x = block(x, perception_emb.unsqueeze(1), feat_rope=None)  # t=1时的条件
+            
+            x = self.norm_final(x)  # (B,1,256)?
+            x_features = x.squeeze(1)  # (B*K, 256) - 只squeeze一次
+            reconstruction = self.reconstruction_head(x_features) # (B,28)?
+            selection_logits = self.selection_head(x_features) # (B,1)?
+            
+            traj = reconstruction[:, :self.trajectory_dim].reshape(bs, 10, 2)
+            speed = reconstruction[:, self.trajectory_dim:]
+            score = selection_logits.squeeze(1)  # (B,)?
             
             all_trajectories.append(traj)
             all_speeds.append(speed)
             all_scores.append(score)
         
-        # 重组输出格式匹配原接口
-        trajectories = torch.stack(all_trajectories)  # (num_anchors, bs, 10, 2)
-        speeds = torch.stack(all_speeds)  # (num_anchors, bs, 8)
-        scores = torch.stack(all_scores)  # (num_anchors, bs)
+        # 堆叠结果
+        trajectories = torch.stack(all_trajectories, dim=1)  # (B, K, 10, 2)?
+        speeds = torch.stack(all_speeds, dim=1)              # (B, K, 8)  ?
+        scores = torch.stack(all_scores, dim=1)              # (B, K)?
         
-        # 计算选择概率
-        probs = F.softmax(scores, dim=0)  # (num_anchors, bs)
+        # 选择概率
+        probs = F.softmax(scores, dim=1)  # (B, K)?
         
         return trajectories, speeds, probs
 
@@ -278,32 +329,44 @@ class TrajectoryDenoiser(nn.Module):
         losses = {}
         bs = gt_trajectories.shape[0]
         
-        # 主损失：速度场MSE损失
-        velocity_loss = F.mse_loss(v_pred, v_target)
+        # 组合真实数据
+        gt_combined = torch.cat([gt_trajectories.reshape(bs, -1), gt_speeds], dim=1)  # (B, 28)
+        
+        # 计算到每个anchor的距离，找到最近的
+        with torch.no_grad():
+            distances = self._compute_anchor_distances(gt_combined)  # (B, K)
+            closest_anchor = distances.argmin(dim=1)  # (B,)
+            
+            # 创建one-hot选择标签
+            selection_labels = F.one_hot(closest_anchor, self.num_anchors).float()  # (B, K)
+        
+        # 主损失：速度场MSE损失（只对最近anchor）
+        closest_mask = F.one_hot(closest_anchor, self.num_anchors).unsqueeze(-1)  # (B, K, 1)
+        v_pred_closest = (v_pred * closest_mask).sum(dim=1)  # (B, 28)
+        v_target_closest = (v_target * closest_mask).sum(dim=1)  # (B, 28)
+        velocity_loss = F.mse_loss(v_pred_closest, v_target_closest)
         losses['loss_velocity'] = velocity_loss
         
-        # 辅助损失：直接重构损失（L1，更鲁棒）
-        traj_recon_loss = F.l1_loss(pred_trajectories, gt_trajectories)
-        speed_recon_loss = F.l1_loss(pred_speeds, gt_speeds)
+        # 重构损失（只对最近anchor）
+        pred_traj_closest = (pred_trajectories * closest_mask.unsqueeze(-1)).sum(dim=1)  # (B, 10, 2)
+        pred_speed_closest = (pred_speeds * closest_mask).sum(dim=1)  # (B, 8)
+        
+        traj_recon_loss = F.l1_loss(pred_traj_closest, gt_trajectories)
+        speed_recon_loss = F.l1_loss(pred_speed_closest, gt_speeds)
         losses.update({
             'loss_traj_recon': traj_recon_loss,
             'loss_speed_recon': speed_recon_loss
         })
         
-        # 选择损失
-        with torch.no_grad():
-            gt_combined_flat = torch.cat([gt_trajectories.reshape(bs, -1), gt_speeds], dim=1)
-            distances = self._compute_anchor_distances(gt_combined_flat)
-            closest_anchor = distances.argmin(dim=1)
-            selection_labels = F.one_hot(closest_anchor, self.num_anchors).float()
-        
+        # 选择损失 - pred_probs现在是 (B, K)，selection_labels也是 (B, K)
         selection_loss = F.binary_cross_entropy(pred_probs, selection_labels)
         losses['loss_selection'] = selection_loss
         
+        # 总损失
         # total_loss = (velocity_loss * self.velocity_weight + 
-        #              traj_recon_loss * self.traj_weight + 
-        #              speed_recon_loss * self.speed_weight + 
-        #              selection_loss * self.selection_weight)
+        #             traj_recon_loss * self.traj_weight + 
+        #             speed_recon_loss * self.speed_weight + 
+        #             selection_loss * self.selection_weight)
         # losses['loss_total'] = total_loss
         
         return losses
