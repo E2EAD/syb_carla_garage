@@ -67,16 +67,21 @@ def train_dpmm(dpmm, config, skill_dataloaders):
                 # 3. 遍历批次数据
                 for batch_idx, batch in enumerate(dataloader):
                     batch = {k: v.cuda() if torch.is_tensor(v) else v for k, v in batch.items()}
-                    # print(f'shape of flatten traj: {batch["flatten_trajectory_points"].detach().shape}')
+                    # # print(f'shape of flatten traj: {batch["flatten_trajectory_points"].detach().shape}')
                     batch_size = batch['route'].size(0)
-                    # print(f'route shape: {batch["route"][:, :10, :].shape}')
-                    flatten_route = batch['route'][:, :10, :].detach().reshape(batch_size, -1)  # here we use totai 20 checkpoints, not 10.
-                    # print(f'flatten_route shape: {flatten_route.shape}')
-                    target_speed = batch['target_speed_twohot'].detach()
-                    # print_data_info(target_speed)
-                    route_and_speed = torch.concat((flatten_route,target_speed), dim=1)
+                    # # print(f'route shape: {batch["route"][:, :10, :].shape}')
+                    # flatten_route = batch['route'][:, :10, :].detach().reshape(batch_size, -1)  # here we use totai 20 checkpoints, not 10.
+                    # # print(f'flatten_route shape: {flatten_route.shape}')
+                    # target_speed = batch['target_speed_twohot'].detach()
+                    # # print_data_info(target_speed)
+                    # route_and_speed = torch.concat((flatten_route,target_speed), dim=1)
                     # print_data_info(route_and_speed)
-                    current_f_traj_list.append(route_and_speed)
+                    # waypoint = batch['ego_waypoints']
+                    # print_data_info(waypoint)
+                    # print(f'waypoint = \n{waypoint}')
+                    flatten_waypoint = batch['ego_waypoints'].detach().reshape(batch_size, -1)  # set self.use_wp_gru = True in config
+                    # print_data_info(flatten_waypoint)
+                    current_f_traj_list.append(flatten_waypoint)
                     if (batch_idx + 1) % dpmm_update_freq == 0:
                         print(f"Updating DPMM at iteration {batch_idx}...")
                         if task_id > 0 or skill_id > 0:
@@ -172,7 +177,7 @@ if __name__ == '__main__':
     # skill_dataloaders = {'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[], 'No_Scenario': []}
     # skill_dataloaders = { 'No_Scenario': [],'Give_Way':[], 'Overtaking':[], 'Merging':[], 'Traffic_Sign':[], 'Emergency_Brake':[]}
     # skill_dataloaders = { 'No_Scenario': [],'Overtaking':[], 'Give_Way':[],  'Traffic_Sign':[], 'Merging':[],'Emergency_Brake':[]}
-    skill_dataloaders = {'Overtaking':[]}
+    skill_dataloaders = {'Emergency_Brake':[]}
 
     for k in skill_dataloaders.keys():
         ability = k
@@ -203,13 +208,13 @@ if __name__ == '__main__':
     dpmm_config = {
         # "dpmm_update_freq": 10,  # DPMM更新间隔
         # "dpmm_update_every_epoch": True,  # DPMM更新间隔
-        "dpmm_update_per_epoch": 2,  # DPMM更新间隔
+        "dpmm_update_per_epoch": 1,  # DPMM更新间隔
         "epochs_per_task": 1,  # 每个任务训练轮数 5 may be enough
         # "batch_size": 16,  # 批次大小
         # "learning_rate": 1e-4,  # 学习率
-        "latent_dim": 2*10+8,  # 潜在空间维度
+        "latent_dim": 2*8,  # 潜在空间维度
         "save_dir": "dpmm_results",  # 保存路径
-        "gamma0": 0.5,  # DPMM初始参数
+        "gamma0": 5,  # DPMM初始参数
         "num_lap": 1000,
         "sF": 1e-5,
         # "new_task_data_ratio": 0.5,

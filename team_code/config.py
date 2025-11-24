@@ -512,7 +512,7 @@ class GlobalConfig:
         'loss_brake': 1.0,
         'loss_forcast': 0.2,
         'loss_selection': 0.0,
-        'loss_task_encoder_kl' : 1e-3,  # KL损失的权重
+        'loss_task_encoder_kl' : 1e-6,  # KL损失的权重
         'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
         'loss_task_encoder_anchor': 0.05,
         'task_encoder/avg_alignment_distance': 1,
@@ -658,7 +658,7 @@ class GlobalConfig:
 
     # Whether to normalize the camera image by the imagenet distribution
     self.normalize_imagenet = True
-    self.use_wp_gru = False  # Whether to use the WP output GRU.
+    self.use_wp_gru = False  # Whether to use the WP output GRU. For current model training should be False here!
 
     # Semantic Segmentation
     self.use_semantic = True  # Whether to use semantic segmentation as auxiliary loss
@@ -904,24 +904,29 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------  
     # 扩散模型参数
     # self.num_anchors = 10  # anchor数量
-    self.denoiser_depth = 12  # Transformer层数
-    self.label_drop_prob = 0.1  # CFG标签丢弃概率
-    self.P_mean = -1.2  # 时间步分布参数
-    self.P_std = 1.2
-    self.t_eps = 1e-3
-    self.noise_scale = 1.0
-    self.proj_dropout = 0.0
-    self.num_denoiser_heads = 8
-    self.denoiser_mlp_ratio = 4.0
-    self.attn_dropout = 0.0
+    # self.denoiser_depth = 12  # Transformer层数
+    # self.label_drop_prob = 0.1  # CFG标签丢弃概率
+    # self.P_mean = -1.2  # 时间步分布参数
+    # self.P_std = 1.2
+    # self.t_eps = 1e-3
+    # self.noise_scale = 1.0
+    # self.proj_dropout = 0.0
+    # self.num_denoiser_heads = 8
+    # self.denoiser_mlp_ratio = 4.0
+    # self.attn_dropout = 0.0
 
-    # JiT's 损失权重
-    self.velocity_weight = 1.0
-    self.traj_weight = 1.0
-    self.speed_weight = 1.0  
-    self.selection_weight = 1.0
+    # # JiT's 损失权重
+    # self.velocity_weight = 1.0
+    # self.traj_weight = 1.0
+    # self.speed_weight = 1.0  
+    # self.selection_weight = 1.0
 
     # self.denoiser_training = True
+  
+    # -----------------------------------------------------------------------------
+    # use wp for dpmm
+    # -----------------------------------------------------------------------------  
+    self.load_wp = True
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():

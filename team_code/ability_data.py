@@ -706,6 +706,13 @@ class Ability_CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-
 
       data['ego_waypoints'] = np.array(waypoints)
 
+    # if self.config.load_wp:
+    #   waypoints = self.get_waypoints(loaded_measurements[self.config.seq_len - 1:],
+    #                                  y_augmentation=aug_translation,
+    #                                  yaw_augmentation=aug_rotation)
+
+    #   data['ego_waypoints'] = np.array(waypoints)
+
     #Convert target speed to indexes
     brake = current_measurement['brake']
 

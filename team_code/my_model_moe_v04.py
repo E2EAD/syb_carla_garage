@@ -24,6 +24,7 @@ import json
 from utils import print_data_info, soft_label_to_hard_label
 from my_query_traj_decoder import PlanningTrajectoryDecoder
 from task_encoder_v2 import TaskEncoder
+from task_encoder_v3 import TransformerTaskEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -56,11 +57,12 @@ class LidarCenterNet(nn.Module):
 
     # 新增 Task Encoder
     if self.config.use_task_encoder:  # 需要在config中添加这个参数
-        self.task_encoder = TaskEncoder(self.config,
-            input_dim=11 * 256,  # joined_checkpoint_features 展平后的维度
-            hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
-            latent_dim=20  # 20维 latent (10个waypoints)
-        )
+        # self.task_encoder = TaskEncoder(self.config,
+        #     input_dim=11 * 256,  # joined_checkpoint_features 展平后的维度
+        #     hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
+        #     latent_dim=20  # 20维 latent (10个waypoints)
+        # )
+        self.task_encoder = TransformerTaskEncoder(self.config)
         # 加载anchor信息来初始化特征锚点
         anchor_mu, anchor_var, cluster_ids = self.task_encoder.load_anchor_mu_and_var()
         num_anchors = anchor_mu.size(0)
