@@ -495,9 +495,9 @@ class GlobalConfig:
         # 'diffusion_loss_speed_recon': 1,
         # 'diffusion_loss_selection': 1,
         # 'diffusion_loss_total': 1,
-        'sample_loss_weighted_regression': 0.01,
-        'sample_loss_best_trajectory': 1.0,
-        'sample_loss_kl_div': 1.0,
+        # 'sample_loss_weighted_regression': 0.01,
+        # 'sample_loss_best_trajectory': 1.0,
+        # 'sample_loss_kl_div': 1.0,
         'loss_semantic': 0.4,
         'loss_checkpoint': 1.0,
         'loss_semantic': 1.0,
@@ -512,8 +512,12 @@ class GlobalConfig:
         'loss_brake': 1.0,
         'loss_forcast': 0.2,
         'loss_selection': 0.0,
-        'loss_task_encoder_kl' : 1e-6,  # KL损失的权重
-        'loss_task_encoder_recon' : 1.0  # 重建损失的权重
+        'loss_task_encoder_kl' : 1e-3,  # KL损失的权重
+        'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
+        'loss_task_encoder_anchor': 0.05,
+        'task_encoder/avg_alignment_distance': 1,
+        'task_encoder/avg_max_prob': 1,
+        'task_encoder/alignment_std': 1
     }
     self.root_dir = ''
     self.val_towns = []
@@ -844,7 +848,7 @@ class GlobalConfig:
     self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Emergency_Brake'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
-    self.trajectory_distance_threshold = 25
+    # self.trajectory_distance_threshold = 25
     self.score_loss_weight = 1
 
 
@@ -877,12 +881,23 @@ class GlobalConfig:
     # Task encoder (a VAE), some htper paras need to be modified in the model script
     # -----------------------------------------------------------------------------  
     self.use_task_encoder = True
-    self.task_encoder_hidden_dims = [1024, 512, 256]  # VAE编码器的隐藏层维度
+    self.task_encoder_hidden_dims = [1024, 1024, 1024, 1024]  # VAE编码器的隐藏层维度
     self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
-    self.task_encoder_temperature = 0.1  # softmax温度参数
 
-    self.detach_fuse_feat = True
+    self.detach_fuse_feat = False
     self.sample_from_vae = True
+
+    # KL损失权重
+    # self.task_encoder_kl_weight = 0.1
+    # self.task_encoder_recon_weight = 1.0
+    # self.task_encoder_anchor_weight = 0.05
+    
+    # KL损失参数
+    self.task_encoder_temperature = 0.5
+    self.task_encoder_focus_threshold = 0.01
+    
+    # 重建损失类型
+    self.recon_loss_type = 'mse'  # 'mse', 'l1', 'smooth_l1'
 
     # -----------------------------------------------------------------------------
     # JiT denoiser

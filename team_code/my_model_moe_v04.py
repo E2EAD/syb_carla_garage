@@ -23,7 +23,7 @@ import json
 
 from utils import print_data_info, soft_label_to_hard_label
 from my_query_traj_decoder import PlanningTrajectoryDecoder
-from task_encoder import TaskEncoder
+from task_encoder_v2 import TaskEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -61,6 +61,12 @@ class LidarCenterNet(nn.Module):
             hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
             latent_dim=20  # 20维 latent (10个waypoints)
         )
+        # 加载anchor信息来初始化特征锚点
+        anchor_mu, anchor_var, cluster_ids = self.task_encoder.load_anchor_mu_and_var()
+        num_anchors = anchor_mu.size(0)
+        
+        # 使用聚类ID初始化特征锚点
+        self.task_encoder.init_feature_anchors(num_anchors, cluster_ids)
 
     self.extra_sensors = self.config.use_velocity or self.config.use_discrete_command  # 1 or 1
     extra_sensor_channels = 0
@@ -384,18 +390,6 @@ class LidarCenterNet(nn.Module):
           else:
             joined_checkpoint_features = self.join(self.checkpoint_query.repeat(bs, 1, 1), fused_features)
             # print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
-          # 新增 Task Encoder 处理
-          task_latent_mu = None
-          task_latent_log_var = None
-          task_latent_z = None
-          reconstructed_features = None
-          if self.config.use_task_encoder:
-            # 展平 joined_checkpoint_features: (batch_size, 11, 256) -> (batch_size, 11*256)
-            # print('using task encoder.')
-            flattened_features = joined_checkpoint_features.reshape(bs, -1)
-            self.last_flattened_features = flattened_features
-            task_latent_mu, task_latent_log_var, task_latent_z, reconstructed_features = self.task_encoder(flattened_features)
-
           gru_features = joined_checkpoint_features[:, :self.config.predict_checkpoint_len]
           # print_data_info(gru_features)  # torch.Size([2, 10, 256])
           target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
@@ -427,6 +421,37 @@ class LidarCenterNet(nn.Module):
           else:
             pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
             # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+
+        # 新增 Task Encoder 处理
+        if self.config.use_task_encoder:
+            # 展平 joined_checkpoint_features: (batch_size, 11, 256) -> (batch_size, 11*256)
+            flattened_features = joined_checkpoint_features.reshape(bs, -1)
+            self.last_flattened_features = flattened_features
+            
+            # 计算每个样本最可能对应的原型索引
+            best_indices = torch.argmax(pred_traj_probs, dim=0)  # (batch_size,)
+            
+            # 调用TaskEncoder，传入必要的参数
+            task_encoder_output = self.task_encoder(
+                flattened_features, 
+                prototype_probs=pred_traj_probs.transpose(0,1),  # 转为(batch_size, num_anchors)
+                update_anchors=True,  # 训练时更新锚点，验证时不更新
+                prototype_labels=best_indices
+            )
+            
+            task_latent_mu = task_encoder_output['mu']
+            task_latent_log_var = task_encoder_output['log_var'] 
+            task_latent_z = task_encoder_output['z']
+            reconstructed_features = task_encoder_output['reconstructed_flat']
+            task_anchor_loss = task_encoder_output['anchor_loss']
+            task_alignment_metrics = task_encoder_output['alignment_metrics']
+        else:
+            task_latent_mu = None
+            task_latent_log_var = None
+            task_latent_z = None
+            reconstructed_features = None
+            task_anchor_loss = None
+            task_alignment_metrics = None
 
       else:
         joined_features = self.join(fused_features)
@@ -466,7 +491,7 @@ class LidarCenterNet(nn.Module):
     if self.config.detect_boxes:
       pred_bounding_box = self.head(bev_feature_grid)
 
-    return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, pred_semantic, pred_bev_semantic, pred_depth, \
+    return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, task_anchor_loss, task_alignment_metrics, pred_semantic, pred_bev_semantic, pred_depth, \
       pred_bounding_box, attention_weights, pred_wp_1, selected_path
   
   def load_anchor_mu_and_var(self, anchor_path):
@@ -495,28 +520,12 @@ class LidarCenterNet(nn.Module):
         # 如果没保存，返回None，重建损失将为0
         return None
 
-  def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, pred_semantic, pred_bev_semantic, pred_depth,
+  def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, task_anchor_loss, task_alignment_metrics, pred_semantic, pred_bev_semantic, pred_depth,
                    pred_bounding_box, pred_wp_1, selected_path, waypoint_label, target_speed_label, checkpoint_label,
                    semantic_label, bev_semantic_label, depth_label, center_heatmap_label, wh_label, yaw_class_label,
                    yaw_res_label, offset_label, velocity_label, brake_target_label, pixel_weight_label,
                    avg_factor_label):
     loss = {}
-    # if self.config.use_wp_gru:  # 0
-    #   if self.config.multi_wp_output:
-    #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label), dim=(1, 2))
-    #     loss_wp_1 = torch.mean(torch.abs(pred_wp_1 - waypoint_label), dim=(1, 2))
-    #     stacked_wp_losses = torch.stack((loss_wp, loss_wp_1), dim=1)
-    #     loss_wp_total, selection_labels = torch.min(stacked_wp_losses, dim=1, keepdim=True)
-    #     loss_wp_total = torch.mean(loss_wp_total)
-    #     loss.update({'loss_wp': loss_wp_total})
-    #     selection_labels = selection_labels.detach().float()
-    #     loss_selection = self.selection_loss(selected_path, selection_labels)
-    #     loss.update({'loss_selection': loss_selection})
-    #   else:
-    #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label))
-    #     loss.update({'loss_wp': loss_wp})
-
-    # anchor_mu, anchor_var = self.load_anchor_mu_and_var(self.config.prior_traj_path)  # here we have mu and var of the anchors
 
     if self.config.use_controller_input_prediction:
       loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
@@ -608,37 +617,43 @@ class LidarCenterNet(nn.Module):
 
       loss.update(loss_bbox)
 
-    # 新增 Task Encoder KL 损失和重建损失
+    # 新增 Task Encoder 损失计算
     if self.config.use_task_encoder and task_latent_mu is not None:
-        # 加载anchor的mu和var（注意：这里直接是方差，不是对数方差）
+        # 加载anchor的mu和var
         anchor_mu, anchor_var = self.load_anchor_mu_and_var(self.config.prior_traj_path)
         
-        # 使用轨迹概率作为soft labels进行加权
-        # KL散度方向：KL(VAE_output || Anchor_distribution)
-        kl_loss = self.task_encoder.compute_kl_loss(
+        # 使用新的严格KL损失计算
+        kl_loss_task = self.task_encoder.compute_kl_loss(
             task_latent_mu, 
             task_latent_log_var,
             anchor_mu.to(task_latent_mu.device),
-            anchor_var.to(task_latent_log_var.device),  # 直接传入方差
+            anchor_var.to(task_latent_log_var.device),
             soft_labels=soft_labels.detach(),  # 使用轨迹预测概率作为soft assignment
-            temperature=self.config.task_encoder_temperature
+            temperature=self.config.task_encoder_temperature,  # 需要在config中添加这个参数
+            focus_threshold=self.config.task_encoder_focus_threshold  # 需要在config中添加这个参数
         )
         
-        loss['loss_task_encoder_kl'] = kl_loss 
+        loss['loss_task_encoder_kl'] = kl_loss_task
         
-        # 添加重建损失
+        # 重建损失
         if reconstructed_features is not None:
-            # 获取原始展平的特征
-            original_flattened_features = self.get_original_flattened_features()  # 需要实现这个方法
-            
             recon_loss = self.task_encoder.compute_reconstruction_loss(
                 reconstructed_features,
-                original_flattened_features,
+                self.last_flattened_features,
                 loss_type=self.config.recon_loss_type,
                 reduction='mean'
             )
-            
             loss['loss_task_encoder_recon'] = recon_loss 
+        
+        # 特征锚点正则化损失
+        if task_anchor_loss is not None:
+            loss['loss_task_encoder_anchor'] = task_anchor_loss 
+        
+        # 监控对齐指标
+        # if task_alignment_metrics:
+        #     # 你可以将这些指标记录到tensorboard或其他监控工具
+        #     print(f"Anchor Alignment - Distance: {task_alignment_metrics['avg_alignment_distance']:.4f}, "
+        #           f"Max Prob: {task_alignment_metrics['avg_max_prob']:.4f}")
 
     return loss
 
