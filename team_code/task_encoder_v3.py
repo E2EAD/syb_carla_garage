@@ -295,16 +295,19 @@ class TransformerTaskEncoder(nn.Module):
         reconstructed_flat = reconstructed_3d.reshape(original_shape[0], -1)
         
         # 更新特征锚点（如果启用）
-        if update_anchors and prototype_labels is not None:
+        if update_anchors and prototype_labels is not None and not self.config.sample_from_vae:
             self.num_anchors = prototype_probs.size(1)
             self.update_feature_anchors(x_3d, prototype_labels, prototype_probs)
         
         # 计算锚点正则化损失
         anchor_loss = torch.tensor(0.0, device=x.device)
         alignment_metrics = {}
-        if prototype_probs is not None and self.anchor_initialized:
+        if prototype_probs is not None and self.anchor_initialized and not self.config.sample_from_vae:
             anchor_loss = self.compute_anchor_regularization_loss(x_3d, prototype_probs)
             alignment_metrics = self.get_anchor_alignment_metrics(x_3d, prototype_probs)
+        else:
+            anchor_loss = None
+            alignment_metrics = None
         
         return {
             'mu': mu,

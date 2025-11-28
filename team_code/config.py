@@ -495,9 +495,9 @@ class GlobalConfig:
         # 'diffusion_loss_speed_recon': 1,
         # 'diffusion_loss_selection': 1,
         # 'diffusion_loss_total': 1,
-        # 'sample_loss_weighted_regression': 0.01,
-        # 'sample_loss_best_trajectory': 1.0,
-        # 'sample_loss_kl_div': 1.0,
+        'sample_loss_weighted_regression': 0.01,
+        'sample_loss_best_trajectory': 1.0,
+        'sample_loss_kl_div': 1.0,
         'loss_semantic': 0.4,
         'loss_checkpoint': 1.0,
         'loss_semantic': 1.0,
@@ -512,7 +512,7 @@ class GlobalConfig:
         'loss_brake': 1.0,
         'loss_forcast': 0.2,
         'loss_selection': 0.0,
-        'loss_task_encoder_kl' : 1e-6,  # KL损失的权重
+        'loss_task_encoder_kl' : 1e-3,  # KL损失的权重
         'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
         'loss_task_encoder_anchor': 0.05,
         'task_encoder/avg_alignment_distance': 1,
@@ -884,7 +884,7 @@ class GlobalConfig:
     self.task_encoder_hidden_dims = [1024, 1024, 1024, 1024]  # VAE编码器的隐藏层维度
     self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
 
-    self.detach_fuse_feat = False
+    self.detach_fuse_feat = True
     self.sample_from_vae = True
 
     # KL损失权重

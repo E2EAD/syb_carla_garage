@@ -22,7 +22,7 @@ class BNPModel:
     def __init__(self, 
                  save_dir, 
                  gamma0=5.0, 
-                 num_lap=100,
+                 num_lap=1000,
                  sF=0.00001,
                  birth_kwargs=None, 
                  merge_kwargs=None):

@@ -30,7 +30,7 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_denoise_model import LidarCenterNet
+from my_model_moe_v03tf import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -46,15 +46,75 @@ try:
 except (ModuleNotFoundError, ImportError) as e:
   print(e)
 
-def load_checkpoint_with_anchor_fix(model, checkpoint_path, device, strict=False):
+def load_checkpoint_with_anchor_feat_fix(model, checkpoint_path, device, strict=False):
     """加载检查点，自动处理锚点不匹配问题"""
+    # checkpoint = torch.load(checkpoint_path, map_location=device)
+    # model_state_dict = model.state_dict()
+    # checkpoint_state_dict = checkpoint if not isinstance(checkpoint, dict) else checkpoint.get('model_state_dict', checkpoint)
+    
+    # # 过滤掉不匹配的键
+    # filtered_state_dict = {}
+    # for key, value in checkpoint_state_dict.items():
+    #     if key in model_state_dict:
+    #         if model_state_dict[key].shape == value.shape:
+    #             filtered_state_dict[key] = value
+    #         else:
+    #             print(f"跳过不匹配的参数: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
+    #     else:
+    #         print(f"跳过不存在的参数: {key}")
+    
+    # # 加载过滤后的状态字典
+    # model.load_state_dict(filtered_state_dict, strict=False)
+    # return model
     checkpoint = torch.load(checkpoint_path, map_location=device)
     model_state_dict = model.state_dict()
     checkpoint_state_dict = checkpoint if not isinstance(checkpoint, dict) else checkpoint.get('model_state_dict', checkpoint)
     
-    # 过滤掉不匹配的键
-    filtered_state_dict = {}
+    # 分离出需要特殊处理的模块
+    task_encoder_params = {}
+    # planning_decoder_params = {}
+    other_params = {}
+    
     for key, value in checkpoint_state_dict.items():
+        if 'task_encoder' in key:
+            task_encoder_params[key] = value
+        # elif 'query_traj_decoder' in key:
+        #     planning_decoder_params[key] = value
+        else:
+            other_params[key] = value
+    
+    # 使用自定义方法加载TaskEncoder
+    if hasattr(model, 'task_encoder') and task_encoder_params:
+        print("Loading TaskEncoder with cluster_id matching...")
+        # 重新组织参数为TaskEncoder的状态字典格式
+        task_encoder_sd = {}
+        for key, value in task_encoder_params.items():
+            # 移除'task_encoder.'前缀
+            new_key = key.replace('task_encoder.', '')
+            task_encoder_sd[new_key] = value
+        
+        model.task_encoder.load_state_dict_with_resize(task_encoder_sd, strict=False)
+    
+    # # 使用自定义方法加载PlanningTrajectoryDecoder
+    # if hasattr(model, 'query_traj_decoder') and planning_decoder_params:
+    #     print("Loading PlanningTrajectoryDecoder with cluster_id matching...")
+    #     # 重新组织参数为PlanningTrajectoryDecoder的状态字典格式
+    #     planning_decoder_sd = {}
+    #     for key, value in planning_decoder_params.items():
+    #         # 移除'query_traj_decoder.'前缀
+    #         new_key = key.replace('query_traj_decoder.', '')
+    #         planning_decoder_sd[new_key] = value
+        
+    #     model.query_traj_decoder.load_state_dict_with_resize(planning_decoder_sd, strict=False)
+    
+    # 加载其他参数
+    filtered_state_dict = {}
+    for key, value in other_params.items():
+        # 只跳过anchor数据本身，不跳过anchor相关的网络参数
+        if key.endswith('.anchors') and 'anchor' in key:
+            print(f"跳过anchor数据: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
+            continue
+            
         if key in model_state_dict:
             if model_state_dict[key].shape == value.shape:
                 filtered_state_dict[key] = value
@@ -558,7 +618,7 @@ def main():
                          shared_dict=shared_dict,
                          rank=rank,
                          validation=False,
-                         ability=config.selected_ability)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+                         ability_list=config.selected_ability_list)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
   if args.setting != 'all':
     val_set = Ability_CARLA_Data(root=config.dataset_root, config=config, shared_dict=shared_dict, rank=rank, validation=True, ability=config.selected_ability)
@@ -603,21 +663,23 @@ def main():
     load_name = str(pathlib.Path(args.load_file).stem)
     if args.continue_epoch:
       start_epoch = int(''.join(filter(str.isdigit, load_name))) + 1
+
+    model = load_checkpoint_with_anchor_feat_fix(model, args.load_file, device)
     
-    # 使用修复后的加载方式
-    try:
-        # 先尝试正常加载
-        # model.load_state_dict(torch.load(args.load_file, map_location=device), strict=False)
-        model = load_checkpoint_ignore_anchors(model, args.load_file, device)
-        print("anchor加载成功, no number changed on anchors.")
-    except RuntimeError as e:
-        if "size mismatch" in str(e) and "anchors" in str(e):
-            print("检测到锚点不匹配，自动修复...")
-            model = load_checkpoint_with_anchor_fix(model, args.load_file, device)
-            print("锚点修复完成")
-        else:
-            # 如果是其他错误，重新抛出
-            raise e
+    # # 使用修复后的加载方式
+    # try:
+    #     # 先尝试正常加载
+    #     # model.load_state_dict(torch.load(args.load_file, map_location=device), strict=False)
+    #     model = load_checkpoint_ignore_anchors(model, args.load_file, device)
+    #     print("anchor加载成功, no number changed on anchors.")
+    # except RuntimeError as e:
+    #     if "size mismatch" in str(e) and "anchors" in str(e):
+    #         print("检测到锚点不匹配，自动修复...")
+    #         model = load_checkpoint_with_anchor_fix(model, args.load_file, device)
+    #         print("锚点修复完成")
+    #     else:
+    #         # 如果是其他错误，重新抛出
+    #         raise e
 
   if config.freeze_backbone:
     model.backbone.requires_grad_(False)
@@ -903,7 +965,8 @@ class Engine(object):
 
       pred_wp,\
       pred_target_speed,\
-      pred_trajectories, pred_speeds, pred_traj_probs, v_pred, v_target, \
+      pred_trajectories, \
+      pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, task_anchor_loss, task_alignment_metrics, sample_checkpoint_label, sample_pred_trajectories, sample_pred_traj_probs,\
       pred_semantic, \
       pred_bev_semantic, \
       pred_depth, \
@@ -914,8 +977,7 @@ class Engine(object):
                           target_point=target_point,
                           ego_vel=ego_vel,
                           command=command,
-                          checkpoint_label=checkpoint, target_speed_label=target_speed,
-                          target_point_next=target_point_next if self.config.two_tp_input else None,)
+                          target_point_next=target_point_next if self.config.two_tp_input else None,)  # forward step here
     else:
       raise ValueError('The chosen vision backbone does not exist. The options are: transFuser, aim, bev_encoder')
 
@@ -934,11 +996,16 @@ class Engine(object):
     else:
       losses = compute_loss(pred_wp=pred_wp,
                             pred_target_speed=pred_target_speed,
-                            pred_trajectories=pred_trajectories, 
-                            pred_speeds=pred_speeds, 
-                            pred_traj_probs=pred_traj_probs, 
-                            v_pred=v_pred, 
-                            v_target=v_target,
+                            pred_trajectories = pred_trajectories, 
+                            pred_traj_probs = pred_traj_probs,
+                            task_latent_mu = task_latent_mu, 
+                            task_latent_log_var = task_latent_log_var, 
+                            reconstructed_features = reconstructed_features, 
+                            task_anchor_loss = task_anchor_loss,
+                            task_alignment_metrics = task_alignment_metrics, 
+                            sample_checkpoint_label = sample_checkpoint_label, 
+                            sample_pred_trajectories = sample_pred_trajectories, 
+                            sample_pred_traj_probs = sample_pred_traj_probs,
                             pred_semantic=pred_semantic,
                             pred_bev_semantic=pred_bev_semantic,
                             pred_depth=pred_depth,
@@ -983,6 +1050,15 @@ class Engine(object):
                                                             ignore_index=-1,
                                                             num_classes=self.config.num_bev_semantic_classes).item()
         metrics['bev_semantic_miou'] = bev_ss_miou
+
+    # 新增：记录TaskEncoder对齐指标到TensorBoard
+    if self.config.use_task_encoder and task_alignment_metrics:
+        # 将对齐指标添加到metrics中，这样它们会被记录到TensorBoard
+        metrics.update({
+            'task_encoder/avg_alignment_distance': task_alignment_metrics.get('avg_alignment_distance', 0.0),
+            'task_encoder/avg_max_prob': task_alignment_metrics.get('avg_max_prob', 0.0),
+            'task_encoder/alignment_std': task_alignment_metrics.get('alignment_std', 0.0)
+        })
 
     self.step += 1
     # Debug visualizations
@@ -1029,7 +1105,8 @@ class Engine(object):
     for i, data in enumerate(tqdm(self.dataloader_train, disable=self.rank != 0)):
 
       with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=bool(self.config.use_amp)):
-        losses, _ = self.load_data_compute_loss(data, validation=False)
+        # losses, _ = self.load_data_compute_loss(data, validation=False)
+        losses, metrics = self.load_data_compute_loss(data, validation=False)
         loss = torch.zeros(1, dtype=torch.float32, device=self.device)
 
         for key, value in losses.items():
@@ -1040,6 +1117,11 @@ class Engine(object):
           else:
             loss += self.detailed_loss_weights[key] * value
             detailed_losses_epoch[key] += float(self.detailed_loss_weights[key] * float(value.item()))
+
+        # 将训练时的metrics也添加到detailed_losses_epoch中
+        for key, value in metrics.items():
+            if key.startswith('task_encoder/'):  # 只记录TaskEncoder相关的指标
+                detailed_losses_epoch[key] += float(value)
 
       self.scaler.scale(loss).backward()
 
@@ -1102,13 +1184,25 @@ class Engine(object):
     self.log_losses(loss_epoch, detailed_val_losses_epoch, num_batches, 'val_')
 
   def log_losses(self, loss_epoch, detailed_losses_epoch, num_batches, prefix=''):
+    # # Collecting the losses from all GPUs has led to issues.
+    # # I simply log the loss from GPU 0 for now they should be similar.
+    # if self.rank == 0:
+    #   self.writer.add_scalar(prefix + 'loss_total', loss_epoch / num_batches, self.cur_epoch)
+    #   for key, value in detailed_losses_epoch.items():
+    #     self.writer.add_scalar(prefix + key, value / num_batches, self.cur_epoch)
     # Collecting the losses from all GPUs has led to issues.
     # I simply log the loss from GPU 0 for now they should be similar.
     if self.rank == 0:
-      self.writer.add_scalar(prefix + 'loss_total', loss_epoch / num_batches, self.cur_epoch)
+        self.writer.add_scalar(prefix + 'loss_total', loss_epoch / num_batches, self.cur_epoch)
 
-      for key, value in detailed_losses_epoch.items():
-        self.writer.add_scalar(prefix + key, value / num_batches, self.cur_epoch)
+        for key, value in detailed_losses_epoch.items():
+            # 对TaskEncoder相关的指标进行特殊处理，确保它们有合适的命名空间
+            if key.startswith('task_encoder/'):
+                # 保持原有的命名空间
+                self.writer.add_scalar(prefix + key, value / num_batches, self.cur_epoch)
+            else:
+                self.writer.add_scalar(prefix + key, value / num_batches, self.cur_epoch)
+
 
   def save(self):
 

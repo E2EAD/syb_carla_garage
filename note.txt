@@ -41,3 +41,12 @@ scheduler = torch.optim.lr_scheduler.OneCycleLR(
 '''
 3. use distill loss to supervise score head (score_kl_div, only the same id anchors), or stop updating early.
 4. fix MoEv02's distance calcu, update its agent for testing.
+5. idea for dpmm online updating (fitting fuse feat):
+'''
+the idea is to integrate the dpmm model into the model, use it to fit the joined_checkpoint_features data. 
+a buffer is used to store the data for fitting, a para is set to determine after how many iterations of the data storing into the buffer 
+(like 5 times per epoch), a fitting of dpmm (both the data in the buffer and sampled from all the passed clusters) is carried out, 
+then store the tracked clusters(id, mu, var) into a pkl/pt/npz or any suitable data structure in 'dpmm_results/'
++exp_time+'/track_cluster_log/'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-tracked_clusters.pkl/pt/etc". 
+what's more i want to monitor the number of the cluster after every epoch on tensor board
+'''

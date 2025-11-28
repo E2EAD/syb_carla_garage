@@ -19,9 +19,12 @@ from copy import deepcopy
 import math
 import os
 from nav_planner import LateralPIDController, get_throttle
+import json
 
-from utils import print_data_info
+from utils import print_data_info, soft_label_to_hard_label
 from my_query_traj_decoder import PlanningTrajectoryDecoder
+# from task_encoder_v2 import TaskEncoder
+from task_encoder_v3 import TransformerTaskEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -51,6 +54,21 @@ class LidarCenterNet(nn.Module):
       target_point_size = 4 if self.config.two_tp_input else 2  # 2
     else:
       target_point_size = 0
+
+    # 新增 Task Encoder
+    if self.config.use_task_encoder:  # 需要在config中添加这个参数
+        # self.task_encoder = TaskEncoder(self.config,
+        #     input_dim=11 * 256,  # joined_checkpoint_features 展平后的维度
+        #     hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
+        #     latent_dim=20  # 20维 latent (10个waypoints)
+        # )
+        self.task_encoder = TransformerTaskEncoder(self.config)
+        # 加载anchor信息来初始化特征锚点
+        anchor_mu, anchor_var, cluster_ids = self.task_encoder.load_anchor_mu_and_var()
+        num_anchors = anchor_mu.size(0)
+        
+        # 使用聚类ID初始化特征锚点
+        self.task_encoder.init_feature_anchors(num_anchors, cluster_ids)
 
     self.extra_sensors = self.config.use_velocity or self.config.use_discrete_command  # 1 or 1
     extra_sensor_channels = 0
@@ -374,12 +392,10 @@ class LidarCenterNet(nn.Module):
           else:
             joined_checkpoint_features = self.join(self.checkpoint_query.repeat(bs, 1, 1), fused_features)
             # print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
-
           gru_features = joined_checkpoint_features[:, :self.config.predict_checkpoint_len]
           # print_data_info(gru_features)  # torch.Size([2, 10, 256])
           target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
           # print_data_info(target_speed_features)  # torch.Size([2, 256])
-          self.last_joined_features = joined_checkpoint_features
 
           # pred_checkpoint = self.checkpoint_decoder(gru_features, target_point) # here we have pred checkpoints
           # print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
@@ -407,6 +423,73 @@ class LidarCenterNet(nn.Module):
           else:
             pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
             # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+
+        if self.config.use_controller_input_prediction and self.config.sample_from_vae:
+          sample_checkpoint_label = None
+          sample_pred_trajectories = None
+          sample_pred_traj_probs = None
+
+          sample_joined_checkpoint_features, sample_checkpoint_label = self.task_encoder.sample_feat_and_traj(sample_num=batch_size)
+        #   print_data_info(sample_joined_checkpoint_features)
+        #   print_data_info(sample_checkpoint_label)
+          sample_gru_features = sample_joined_checkpoint_features[:, :self.config.predict_checkpoint_len]
+        #   print_data_info(sample_gru_features)  # torch.Size([2, 10, 256])
+        #   target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
+          # print_data_info(target_speed_features)  # torch.Size([2, 256])
+
+          # pred_checkpoint = self.checkpoint_decoder(gru_features, target_point) # here we have pred checkpoints
+          # print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
+
+          # my decoder get in
+          sample_pred_trajectories, sample_scores = self.query_traj_decoder(sample_gru_features)  # (num_anchors, batch_size, 20) scores: (num_anchors, batch_size)
+          # print_data_info(pred_trajectories)  # torch.Size([K, 2, 20])
+          # print_data_info(scores)  # torch.Size([K, 2])
+          sample_num_anchors = sample_scores.size(0)
+          sample_batch_size = sample_scores.size(1)
+          sample_pred_trajectories = sample_pred_trajectories.reshape(sample_num_anchors, sample_batch_size, 10, 2)  # torch.Size([K, 2, 10, 2]) here we have pred trajectories
+
+          # 首先确保scores是合理的
+          sample_scores = torch.clamp(scores, min=-10.0, max=10.0)  # 限制logits范围
+          
+          # 稳定的softmax计算
+          sample_pred_traj_logits = sample_scores - scores.max(dim=0, keepdim=True)[0]
+          sample_pred_traj_probs = F.softmax(sample_pred_traj_logits, dim=0)
+          sample_pred_traj_probs = torch.clamp(sample_pred_traj_probs, min=1e-8, max=1.0)  # here we have pred traj probs
+
+
+        # 新增 Task Encoder 处理
+        if self.config.use_task_encoder:
+            # 展平 joined_checkpoint_features: (batch_size, 11, 256) -> (batch_size, 11*256)
+            if not self.config.detach_fuse_feat:
+              flattened_features = joined_checkpoint_features.reshape(bs, -1)
+            else:
+              flattened_features = joined_checkpoint_features.reshape(bs, -1).detach()
+            self.last_flattened_features = flattened_features
+            
+            # 计算每个样本最可能对应的原型索引
+            best_indices = torch.argmax(pred_traj_probs, dim=0)  # (batch_size,)
+            
+            # 调用TaskEncoder，传入必要的参数
+            task_encoder_output = self.task_encoder(
+                flattened_features, 
+                prototype_probs=pred_traj_probs.transpose(0,1),  # 转为(batch_size, num_anchors)
+                update_anchors=True,  # 训练时更新锚点，验证时不更新
+                prototype_labels=best_indices
+            )
+            
+            task_latent_mu = task_encoder_output['mu']
+            task_latent_log_var = task_encoder_output['log_var'] 
+            task_latent_z = task_encoder_output['z']
+            reconstructed_features = task_encoder_output['reconstructed_flat']
+            task_anchor_loss = None
+            task_alignment_metrics = None
+        else:
+            task_latent_mu = None
+            task_latent_log_var = None
+            task_latent_z = None
+            reconstructed_features = None
+            task_anchor_loss = None
+            task_alignment_metrics = None
 
       else:
         joined_features = self.join(fused_features)
@@ -446,29 +529,43 @@ class LidarCenterNet(nn.Module):
     if self.config.detect_boxes:
       pred_bounding_box = self.head(bev_feature_grid)
 
-    return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth, \
+    return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, task_anchor_loss, task_alignment_metrics, sample_checkpoint_label, sample_pred_trajectories, sample_pred_traj_probs,\
+        pred_semantic, pred_bev_semantic, pred_depth, \
       pred_bounding_box, attention_weights, pred_wp_1, selected_path
+  
+  def load_anchor_mu_and_var(self, anchor_path):
+    with open(anchor_path, 'r') as f:
+        data = json.load(f)
 
-  def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth,
+    # Extract first 20 elements (x,y for 10 waypoints) from each cluster's 'mu'
+    mu_list = [entry['mu'][:20] for entry in data]
+    anchors_mu = torch.tensor(mu_list, dtype=torch.float32)
+    var_list = [entry['var'][:20] for entry in data]
+    anchor_var = torch.tensor(var_list, dtype=torch.float32)
+    # print(f'read anchors mu and var from {anchor_path}')
+    return anchors_mu, anchor_var
+  
+  def get_original_flattened_features(self):
+    """
+    获取原始展平的特征
+    这个方法需要在forward过程中保存原始展平的特征
+    或者我们可以修改forward方法直接返回这个值
+    """
+    # 由于我们在forward中已经展平了特征，我们需要在那里保存它
+    # 这里我们假设在forward中已经保存了self.last_flattened_features
+    if hasattr(self, 'last_flattened_features'):
+        return self.last_flattened_features
+    else:
+        # 如果没保存，返回None，重建损失将为0
+        return None
+
+  def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, task_latent_mu, task_latent_log_var, reconstructed_features, task_anchor_loss, task_alignment_metrics, sample_checkpoint_label, sample_pred_trajectories, sample_pred_traj_probs,\
+                   pred_semantic, pred_bev_semantic, pred_depth,
                    pred_bounding_box, pred_wp_1, selected_path, waypoint_label, target_speed_label, checkpoint_label,
                    semantic_label, bev_semantic_label, depth_label, center_heatmap_label, wh_label, yaw_class_label,
                    yaw_res_label, offset_label, velocity_label, brake_target_label, pixel_weight_label,
                    avg_factor_label):
     loss = {}
-    # if self.config.use_wp_gru:  # 0
-    #   if self.config.multi_wp_output:
-    #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label), dim=(1, 2))
-    #     loss_wp_1 = torch.mean(torch.abs(pred_wp_1 - waypoint_label), dim=(1, 2))
-    #     stacked_wp_losses = torch.stack((loss_wp, loss_wp_1), dim=1)
-    #     loss_wp_total, selection_labels = torch.min(stacked_wp_losses, dim=1, keepdim=True)
-    #     loss_wp_total = torch.mean(loss_wp_total)
-    #     loss.update({'loss_wp': loss_wp_total})
-    #     selection_labels = selection_labels.detach().float()
-    #     loss_selection = self.selection_loss(selected_path, selection_labels)
-    #     loss.update({'loss_selection': loss_selection})
-    #   else:
-    #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label))
-    #     loss.update({'loss_wp': loss_wp})
 
     if self.config.use_controller_input_prediction:
       loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
@@ -488,7 +585,8 @@ class LidarCenterNet(nn.Module):
           batch_size = distances.size(1)
           
           # 添加距离裁剪，避免极端值
-          distances = torch.clamp(distances, min=1e-6, max=100.0)
+          distances = torch.clamp(distances, min=1e-6, max=1000.0)
+          # print(f'distances: {distances}')
 
       # 3. 创建软标签（修复数值稳定性）
       with torch.no_grad():
@@ -500,6 +598,9 @@ class LidarCenterNet(nn.Module):
           
           # 确保概率分布有效
           soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+          # print(f'soft_labels: {soft_labels}')
+
+      # hard_labels = soft_label_to_hard_label(soft_labels.detach())
       
       kl_loss = F.kl_div(
             torch.log(pred_traj_probs + 1e-8),  # 输入应该是log(prediction)
@@ -524,7 +625,7 @@ class LidarCenterNet(nn.Module):
       regression_losses = regression_losses.sum(dim=(-1, -2))  # (num_anchors, batch_size)
       
       # Weight each trajectory's loss by its probability
-      weighted_regression_loss = torch.sum(regression_losses * pred_traj_probs.detach()) / batch_size
+      weighted_regression_loss = torch.sum(regression_losses * soft_labels.detach()) / batch_size  # or pred_traj_probs.detach()
       loss.update({'loss_weighted_regression': weighted_regression_loss})
 
       # BEST TRAJECTORY LOSS - Supervision for the best trajectory
@@ -555,6 +656,106 @@ class LidarCenterNet(nn.Module):
                                  brake_target_label, pixel_weight_label, avg_factor_label)
 
       loss.update(loss_bbox)
+
+    if self.config.use_controller_input_prediction and self.config.sample_from_vae:
+      sample_num_anchors = sample_pred_traj_probs.size(0)
+      sample_batch_size = sample_pred_traj_probs.size(1)
+      # 计算距离（添加数值稳定性）
+      with torch.no_grad():
+          # print_data_info(checkpoint_label)  # torch.Size([2, 10, 2])
+          sample_distances = torch.norm(
+              sample_pred_trajectories - sample_checkpoint_label.unsqueeze(0), 
+              dim=-1
+          ).sum(dim=-1)  # (num_anchors, batch_size)
+          sample_batch_size = sample_distances.size(1)
+          
+          # 添加距离裁剪，避免极端值
+          sample_distances = torch.clamp(sample_distances, min=1e-6, max=1000.0)
+          # print(f'distances: {distances}')
+
+      # 3. 创建软标签（修复数值稳定性）
+      with torch.no_grad():
+          # 使用稳定的softmax计算
+          sample_neg_distances = -sample_distances / self.config.temperature
+          # 减去最大值提高数值稳定性
+          sample_neg_distances = sample_neg_distances - sample_neg_distances.max(dim=0, keepdim=True)[0]
+          sample_soft_labels = F.softmax(sample_neg_distances, dim=0)
+          
+          # 确保概率分布有效
+          sample_soft_labels = torch.clamp(sample_soft_labels, min=1e-8, max=1.0)
+          # print(f'soft_labels: {soft_labels}')
+
+      # hard_labels = soft_label_to_hard_label(soft_labels.detach())
+      
+      sample_kl_loss = F.kl_div(
+            torch.log(sample_pred_traj_probs + 1e-8),  # 输入应该是log(prediction)
+            sample_soft_labels,                    # target应该是概率分布
+            reduction='batchmean',
+            log_target=False  # 明确指定target不是log形式
+            )
+      loss.update({'sample_loss_kl_div': sample_kl_loss})
+
+      # WEIGHTED REGRESSION LOSS - Use ALL trajectories weighted by their probabilities
+      # Expand checkpoint_label to match pred_trajectories shape
+      sample_checkpoint_expanded = sample_checkpoint_label.unsqueeze(0).expand(num_anchors, -1, -1, -1)
+      
+      # Calculate regression loss for EACH trajectory
+      sample_regression_losses = F.smooth_l1_loss(
+          sample_pred_trajectories, 
+          sample_checkpoint_expanded, 
+          reduction='none'
+      )  # (num_anchors, batch_size, 10, 2)
+      
+      # Sum over waypoints and coordinates, keep batch and anchor dimensions
+      sample_regression_losses = sample_regression_losses.sum(dim=(-1, -2))  # (num_anchors, batch_size)
+      
+      # Weight each trajectory's loss by its probability
+      sample_weighted_regression_loss = torch.sum(sample_regression_losses * sample_soft_labels.detach()) / sample_batch_size  # or pred_traj_probs.detach()
+      loss.update({'sample_loss_weighted_regression': sample_weighted_regression_loss})
+
+      # BEST TRAJECTORY LOSS - Supervision for the best trajectory
+      sample_min_distances, sample_best_indices = torch.min(sample_distances, dim=0)
+      sample_best_pred_trajectories = sample_pred_trajectories[sample_best_indices, torch.arange(sample_batch_size)]
+      sample_best_trajectory_loss = F.smooth_l1_loss(sample_best_pred_trajectories, sample_checkpoint_label)
+      loss.update({'sample_loss_best_trajectory': sample_best_trajectory_loss })
+
+    # 新增 Task Encoder 损失计算
+    if self.config.use_task_encoder and task_latent_mu is not None:
+        # 加载anchor的mu和var
+        anchor_mu, anchor_var = self.load_anchor_mu_and_var(self.config.prior_traj_path)
+        
+        # 使用新的严格KL损失计算
+        kl_loss_task = self.task_encoder.compute_kl_loss(
+            task_latent_mu, 
+            task_latent_log_var,
+            anchor_mu.to(task_latent_mu.device),
+            anchor_var.to(task_latent_log_var.device),
+            soft_labels=soft_labels.detach(),  # 使用轨迹预测概率作为soft assignment
+            temperature=self.config.task_encoder_temperature,  # 需要在config中添加这个参数
+            focus_threshold=self.config.task_encoder_focus_threshold  # 需要在config中添加这个参数
+        )
+        
+        loss['loss_task_encoder_kl'] = kl_loss_task
+        
+        # 重建损失
+        if reconstructed_features is not None:
+            recon_loss = self.task_encoder.compute_reconstruction_loss(
+                reconstructed_features,
+                self.last_flattened_features,
+                loss_type=self.config.recon_loss_type,
+                reduction='mean'
+            )
+            loss['loss_task_encoder_recon'] = recon_loss 
+        
+        # 特征锚点正则化损失
+        if task_anchor_loss is not None:
+            loss['loss_task_encoder_anchor'] = task_anchor_loss 
+        
+        # 监控对齐指标
+        # if task_alignment_metrics:
+        #     # 你可以将这些指标记录到tensorboard或其他监控工具
+        #     print(f"Anchor Alignment - Distance: {task_alignment_metrics['avg_alignment_distance']:.4f}, "
+        #           f"Max Prob: {task_alignment_metrics['avg_max_prob']:.4f}")
 
     return loss
 
