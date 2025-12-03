@@ -514,10 +514,10 @@ class GlobalConfig:
         'loss_selection': 0.0,
         'loss_task_encoder_kl' : 1e-3,  # KL损失的权重
         'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
-        'loss_task_encoder_anchor': 0.05,
-        'task_encoder/avg_alignment_distance': 1,
-        'task_encoder/avg_max_prob': 1,
-        'task_encoder/alignment_std': 1
+        # 'loss_task_encoder_anchor': 0.05,
+        # 'task_encoder/avg_alignment_distance': 1,
+        # 'task_encoder/avg_max_prob': 1,
+        # 'task_encoder/alignment_std': 1
     }
     self.root_dir = ''
     self.val_towns = []
@@ -729,6 +729,20 @@ class GlobalConfig:
         9,  # vehicle
         10,  # walker
     ]
+  
+    self.bev_class_names = [
+      "unlabeled",
+      "road",
+      "sidewalk",
+      "lane_markers",
+      "lane_markers broken",
+      "stop_signs",
+      "traffic_light_green",
+      "traffic_light_yellow",
+      "traffic_light_red",
+      "vehicle",
+      "walker"
+  ]
 
     # Color format BGR
     self.bev_classes_list = [
@@ -780,7 +794,7 @@ class GlobalConfig:
     # Unit meters. Points from the LiDAR higher than this threshold are discarded. Default uses all the points.
     self.max_height_lidar = 100.0
 
-    self.tp_attention = True  # Adds a TP at the TF decoder and computes it with attention visualization.
+    self.tp_attention = True  # Adds a TP at the TF decoder and computes it with attention visualization. Set to False when using tfpp gru for traj pred.
     self.multi_wp_output = False  # Predicts 2 WP outputs and uses the min loss of both.
 
     # whether to give the predicted path as input to the target speed network (and use more layers)
@@ -849,7 +863,7 @@ class GlobalConfig:
     self.selected_ability = 'Emergency_Brake'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
-    self.score_loss_weight = 1
+    # self.score_loss_weight = 1
 
 
     # -----------------------------------------------------------------------------
@@ -893,8 +907,8 @@ class GlobalConfig:
     # self.task_encoder_anchor_weight = 0.05
     
     # KL损失参数
-    self.task_encoder_temperature = 0.5
-    self.task_encoder_focus_threshold = 0.01
+    # self.task_encoder_temperature = 0.5
+    # self.task_encoder_focus_threshold = 0.01
     
     # 重建损失类型
     self.recon_loss_type = 'mse'  # 'mse', 'l1', 'smooth_l1'

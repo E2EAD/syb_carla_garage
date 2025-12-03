@@ -860,7 +860,7 @@ class Engine(object):
 
     ego_vel = data['speed'].to(self.device, dtype=torch.float32).unsqueeze(1)
 
-    if self.config.use_twohot_target_speeds:
+    if self.config.use_twohot_target_speeds:  # 1
       target_speed = data['target_speed_twohot'].to(self.device, dtype=torch.float32)
     else:
       target_speed = data['target_speed'].to(self.device, dtype=torch.long)

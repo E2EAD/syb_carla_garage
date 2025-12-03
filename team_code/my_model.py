@@ -117,7 +117,7 @@ class LidarCenterNet(nn.Module):
         ts_input_channel = self.config.gru_input_size
       else:
         ts_input_channel = self.config.gru_hidden_size
-      if self.config.input_path_to_target_speed_network:
+      if self.config.input_path_to_target_speed_network:  # 0
         extra_dimensions = 2 * self.config.predict_checkpoint_len
         self.target_speed_network = nn.Sequential(
             nn.Linear(ts_input_channel + extra_dimensions, ts_input_channel + extra_dimensions), nn.ReLU(inplace=True),
@@ -265,7 +265,7 @@ class LidarCenterNet(nn.Module):
     else:
       label_smoothing = 0.0
 
-    if self.config.use_focal_loss:
+    if self.config.use_focal_loss:  # 0
       self.loss_speed = FocalLoss(alpha=self.speed_weights, gamma=self.config.focal_loss_gamma)
 
     else:

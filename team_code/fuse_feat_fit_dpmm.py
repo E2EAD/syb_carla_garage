@@ -97,25 +97,26 @@ class FeatureExtractor:
                 )
             
             # For debugging: print model outputs
-            print(f"Model outputs - trajectories: {pred_trajectories.shape if pred_trajectories is not None else 'None'}")
-            print(f"Model outputs - traj_probs: {pred_traj_probs.shape if pred_traj_probs is not None else 'None'}")
+            # print(f"Model outputs - trajectories: {pred_trajectories.shape if pred_trajectories is not None else 'None'}")
+            # print(f"Model outputs - traj_probs: {pred_traj_probs.shape if pred_traj_probs is not None else 'None'}")
             
             # Extract the actual joined_checkpoint_features from the model
             # This depends on your model implementation
             features = self._extract_joined_features_from_model()
+            print(f"Model outputs - features: {features.shape if features is not None else 'None'}")
             
-            # Prepare sample data for reference
-            samples = {
-                'target_point': batch['target_point'].cpu(),
-                'speed': batch['speed'].cpu(),
-                'command': batch['command'].cpu()
-            }
+            # # Prepare sample data for reference
+            # samples = {
+            #     'target_point': batch['target_point'].cpu(),
+            #     'speed': batch['speed'].cpu(),
+            #     'command': batch['command'].cpu()
+            # }
             
-            return features, samples
+            return features
             
         except Exception as e:
             print(f"Error in forward pass: {e}")
-            return None, None
+            return None
     
     def _extract_joined_features_from_model(self):
         """
@@ -127,29 +128,33 @@ class FeatureExtractor:
             print('get joined_checkpoint_features from last_joined_features')
             return self.model.last_joined_features.cpu()
         
-        # Method 2: Hook into specific layer (adapt layer name as needed)
-        features = []
+        else:
+            print('get no joined_checkpoint_features')
+            return 
         
-        def hook_fn(module, input, output):
-            features.append(output.detach().cpu())
+        # # Method 2: Hook into specific layer (adapt layer name as needed)
+        # features = []
         
-        # Register hook - adjust layer name based on your model architecture
-        target_layer = None
-        for name, module in self.model.named_modules():
-            if 'join' in name and isinstance(module, torch.nn.TransformerDecoder):
-                target_layer = module
-                break
+        # def hook_fn(module, input, output):
+        #     features.append(output.detach().cpu())
         
-        if target_layer is None:
-            print("Warning: Could not find join layer, using alternative extraction")
-            # Alternative: use the GRU features before trajectory decoding
-            for name, module in self.model.named_modules():
-                if 'checkpoint_query' in name:
-                    print(f"Found checkpoint query: {name}")
+        # # Register hook - adjust layer name based on your model architecture
+        # target_layer = None
+        # for name, module in self.model.named_modules():
+        #     if 'join' in name and isinstance(module, torch.nn.TransformerDecoder):
+        #         target_layer = module
+        #         break
         
-        # For now, return dummy features - YOU NEED TO IMPLEMENT THIS BASED ON YOUR MODEL
-        print("Warning: Using dummy features - implement proper feature extraction")
-        return torch.randn(1, 11, 256)  # Dummy features
+        # if target_layer is None:
+        #     print("Warning: Could not find join layer, using alternative extraction")
+        #     # Alternative: use the GRU features before trajectory decoding
+        #     for name, module in self.model.named_modules():
+        #         if 'checkpoint_query' in name:
+        #             print(f"Found checkpoint query: {name}")
+        
+        # # For now, return dummy features - YOU NEED TO IMPLEMENT THIS BASED ON YOUR MODEL
+        # print("Warning: Using dummy features - implement proper feature extraction")
+        # return torch.randn(1, 11, 256)  # Dummy features
 
 
 class DpmmFeatureTrainer:
