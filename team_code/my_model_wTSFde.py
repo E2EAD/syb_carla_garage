@@ -22,7 +22,8 @@ from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
 # from my_query_traj_decoder import PlanningTrajectoryDecoder
-from front_door_encoder import FrontDoorEncoder
+from traj_front_door_encoder import TrajFrontDoorEncoder
+from speed_front_door_encoder import SpeedFrontDoorEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -188,7 +189,8 @@ class LidarCenterNet(nn.Module):
                                                                     waypoints=self.config.predict_checkpoint_len,
                                                                     target_point_size=target_point_size)
           # self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
-          self.frontdoor_decoder = FrontDoorEncoder(self.config)
+          self.traj_front_door_encoder = TrajFrontDoorEncoder(self.config)
+          self.speed_front_door_encoder = SpeedFrontDoorEncoder(self.config)
 
         self.reset_parameters()
 
@@ -221,7 +223,8 @@ class LidarCenterNet(nn.Module):
                                                                     hidden_size=self.config.gru_hidden_size,
                                                                     target_point_size=target_point_size)
           # self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
-          self.frontdoor_decoder = FrontDoorEncoder(self.config)
+          self.traj_front_door_encoder = TrajFrontDoorEncoder(self.config)
+          self.speed_front_door_encoder = SpeedFrontDoorEncoder(self.config)
 
     if self.config.use_wp_gru or self.config.use_controller_input_prediction:
       if self.extra_sensors:
@@ -382,8 +385,12 @@ class LidarCenterNet(nn.Module):
           # print_data_info(gru_features)  # torch.Size([2, 10, 256])
           target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
           # print_data_info(target_speed_features)  # torch.Size([2, 256])
+          target_speed_features = target_speed_features.unsqueeze(1) # torch.Size([2, 1, 256])
 
-          aug_gru_features, _ = self.frontdoor_decoder(gru_features)
+          aug_gru_features, _ = self.traj_front_door_encoder(gru_features)
+          aug_target_speed_features, _ = self.speed_front_door_encoder(target_speed_features)
+          aug_target_speed_features = aug_target_speed_features.squeeze(1) # torch.Size([2, 256])
+
           pred_checkpoint = self.checkpoint_decoder(aug_gru_features, target_point) # here we have pred checkpoints
           # print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
 
@@ -408,7 +415,7 @@ class LidarCenterNet(nn.Module):
                 (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
             pred_target_speed = self.target_speed_network(ts_input)
           else:
-            pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
+            pred_target_speed = self.target_speed_network(aug_target_speed_features)  # here we have pred speed
             # print_data_info(pred_target_speed)  # torch.Size([2, 8])
 
       else:

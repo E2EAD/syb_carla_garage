@@ -859,7 +859,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Emergency_Brake'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
@@ -914,33 +914,13 @@ class GlobalConfig:
     self.recon_loss_type = 'mse'  # 'mse', 'l1', 'smooth_l1'
 
     # -----------------------------------------------------------------------------
-    # JiT denoiser
+    # Speed front door encoder and anchor
     # -----------------------------------------------------------------------------  
-    # 扩散模型参数
-    # self.num_anchors = 10  # anchor数量
-    # self.denoiser_depth = 12  # Transformer层数
-    # self.label_drop_prob = 0.1  # CFG标签丢弃概率
-    # self.P_mean = -1.2  # 时间步分布参数
-    # self.P_std = 1.2
-    # self.t_eps = 1e-3
-    # self.noise_scale = 1.0
-    # self.proj_dropout = 0.0
-    # self.num_denoiser_heads = 8
-    # self.denoiser_mlp_ratio = 4.0
-    # self.attn_dropout = 0.0
+    self.prior_speed_path = "./team_code/dpmm_results/2025-12-06-00-07/track_cluster_log/4-0-0-1910-tracked_clusters.json"
+    self.sf_de_dim = 256  # 速度编码器维度
+    self.sf_num_heads = 8  # 注意力头数
+    self.sf_dropout = 0.1  # dropout率
 
-    # # JiT's 损失权重
-    # self.velocity_weight = 1.0
-    # self.traj_weight = 1.0
-    # self.speed_weight = 1.0  
-    # self.selection_weight = 1.0
-
-    # self.denoiser_training = True
-  
-    # -----------------------------------------------------------------------------
-    # use wp for dpmm
-    # -----------------------------------------------------------------------------  
-    self.load_wp = True
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():

@@ -50,18 +50,16 @@ from sklearn.metrics import confusion_matrix, classification_report, accuracy_sc
 # parent_dir = os.path.dirname(current_dir)
 # sys.path.insert(0, parent_dir)
 # Import your model and data classes
-from model import LidarCenterNet
+from my_model_moe_v2 import LidarCenterNet
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
 import transfuser_utils as t_u
 
 import random
 
-from utils import print_data_info
-
 
 class BEV_mIoU:
-    def __init__(self, num_classes, ignore_index=0):
+    def __init__(self, num_classes, ignore_index=-1):
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.reset()
@@ -88,16 +86,11 @@ class BEV_mIoU:
         # Flatten batch dimensions
         pred_flat = pred_np.ravel()
         target_flat = target_np.ravel()
-        # print(f'check 1 bev sem pred: {pred_flat[:20]}')
-        # print(f'check 1 bev sem gt: {target_flat[:20]}')
         
         # Filter out ignore_index (-1)
         mask = target_flat != self.ignore_index
         pred_valid = pred_flat[mask]
         target_valid = target_flat[mask]
-
-        # print_data_info(target_flat)
-        # print_data_info(target_valid)
         
         # Build confusion matrix for this batch
         if len(target_valid) > 0:
@@ -133,7 +126,7 @@ class BEV_mIoU:
     def compute_miou(self):
         """Compute mean IoU (excluding classes with NaN)"""
         iou_per_class = self.compute_iou_per_class()
-        valid_ious = iou_per_class[~np.isnan(iou_per_class) & (iou_per_class > 0)]
+        valid_ious = iou_per_class[~np.isnan(iou_per_class)]
         
         if len(valid_ious) > 0:
             return float(np.mean(valid_ious))
@@ -150,42 +143,42 @@ class BEV_mIoU:
             'confusion_matrix': self.confusion_matrix.tolist()
         }
     
-    # def compute_iou_per_class(self):
-    #     """Compute IoU for each class"""
-    #     iou_per_class = np.zeros(self.num_classes, dtype=np.float32)
+    def compute_iou_per_class(self):
+        """Compute IoU for each class"""
+        iou_per_class = np.zeros(self.num_classes, dtype=np.float32)
         
-    #     for i in range(self.num_classes):
-    #         tp = self.confusion_matrix[i, i]
-    #         fp = self.confusion_matrix[:, i].sum() - tp
-    #         fn = self.confusion_matrix[i, :].sum() - tp
+        for i in range(self.num_classes):
+            tp = self.confusion_matrix[i, i]
+            fp = self.confusion_matrix[:, i].sum() - tp
+            fn = self.confusion_matrix[i, :].sum() - tp
             
-    #         denominator = tp + fp + fn
-    #         if denominator > 0:
-    #             iou_per_class[i] = tp / denominator
-    #         else:
-    #             iou_per_class[i] = float('nan')  # Class not present
+            denominator = tp + fp + fn
+            if denominator > 0:
+                iou_per_class[i] = tp / denominator
+            else:
+                iou_per_class[i] = float('nan')  # Class not present
         
-    #     return iou_per_class
+        return iou_per_class
     
-    # def compute_miou(self):
-    #     """Compute mean IoU (excluding classes with NaN)"""
-    #     iou_per_class = self.compute_iou_per_class()
-    #     valid_ious = iou_per_class[~np.isnan(iou_per_class)]
+    def compute_miou(self):
+        """Compute mean IoU (excluding classes with NaN)"""
+        iou_per_class = self.compute_iou_per_class()
+        valid_ious = iou_per_class[~np.isnan(iou_per_class)]
         
-    #     if len(valid_ious) > 0:
-    #         return float(np.mean(valid_ious))
-    #     return 0.0
+        if len(valid_ious) > 0:
+            return float(np.mean(valid_ious))
+        return 0.0
     
-    # def get_results(self):
-    #     """Return mIoU and per-class IoU"""
-    #     iou_per_class = self.compute_iou_per_class()
-    #     miou = self.compute_miou()
+    def get_results(self):
+        """Return mIoU and per-class IoU"""
+        iou_per_class = self.compute_iou_per_class()
+        miou = self.compute_miou()
         
-    #     return {
-    #         'mIoU': miou,
-    #         'IoU_per_class': iou_per_class.tolist(),
-    #         'confusion_matrix': self.confusion_matrix.tolist()
-    #     }
+        return {
+            'mIoU': miou,
+            'IoU_per_class': iou_per_class.tolist(),
+            'confusion_matrix': self.confusion_matrix.tolist()
+        }
 
 class OpenLoopEvaluator:
     """Evaluator for open-loop trajectory and speed prediction"""
@@ -245,8 +238,8 @@ class OpenLoopEvaluator:
 
         # Add BEV mIoU calculator initialization
         self.bev_miou_calculator = BEV_mIoU(
-            num_classes=config.num_bev_semantic_classes,  # for unlabeled is ignored
-            ignore_index=0
+            num_classes=config.num_bev_semantic_classes,
+            ignore_index=-1 
         )
         
         # Add to metrics storage
@@ -382,7 +375,7 @@ class OpenLoopEvaluator:
             bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
         
         # Model forward pass
-        pred_wp, pred_target_speed, pred_checkpoint, _, pred_bev_semantic, _, _, _, _, _ = self.model(
+        pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
             rgb=rgb,
             lidar_bev=lidar,
             target_point=target_point,
@@ -394,12 +387,12 @@ class OpenLoopEvaluator:
         # print(f'pred_target_speed shape: {pred_target_speed.shape}')
         batch_size = pred_target_speed.shape[0] if pred_target_speed is not None else 1
         
-        # # Handle different prediction types
-        # if pred_trajectories is not None and pred_traj_probs is not None:
-        #     # Select best trajectory (top-1)
-        #     best_anchor_indices = torch.argmax(pred_traj_probs, dim=0)
-        #     batch_indices = torch.arange(batch_size, device=pred_trajectories.device)
-        #     pred_checkpoint = pred_trajectories[best_anchor_indices, batch_indices]
+        # Handle different prediction types
+        if pred_trajectories is not None and pred_traj_probs is not None:
+            # Select best trajectory (top-1)
+            best_anchor_indices = torch.argmax(pred_traj_probs, dim=0)
+            batch_indices = torch.arange(batch_size, device=pred_trajectories.device)
+            pred_checkpoint = pred_trajectories[best_anchor_indices, batch_indices]
         # else:
         #     # Fallback: use waypoints if available
         #     if pred_wp is not None:
@@ -687,21 +680,17 @@ class OpenLoopEvaluator:
         
         print(f"BEV mIoU: {bev_results['mIoU']:.4f}")
         
-        # Print per-class IoU if you have class names
-        print("\nBEV Per-class IoU:")
-        for i, iou in enumerate(bev_results['IoU_per_class']):
-            if not np.isnan(iou) and iou>0:
-                print(f"  Class {i}: {iou:.4f}")
-        if hasattr(self.config, 'bev_class_names') and self.config.bev_class_names:
-            print("\nBEV Per-class IoU:")
-            for i, (class_name, iou) in enumerate(zip(self.config.bev_class_names, bev_results['IoU_per_class'])):
-                if not np.isnan(iou) and iou>0:
-                    print(f"  {class_name}: {iou:.4f}")
-        else:
-            print("\nBEV Per-class IoU:")
-            for i, iou in enumerate(bev_results['IoU_per_class']):
-                if not np.isnan(iou) and iou>0:
-                    print(f"  Class {i}: {iou:.4f}")
+        # # Print per-class IoU if you have class names
+        # if hasattr(self.config, 'bev_class_names') and self.config.bev_class_names:
+        #     print("\nBEV Per-class IoU:")
+        #     for i, (class_name, iou) in enumerate(zip(self.config.bev_class_names, bev_results['IoU_per_class'])):
+        #         if not np.isnan(iou):
+        #             print(f"  {class_name}: {iou:.4f}")
+        # else:
+        #     print("\nBEV Per-class IoU:")
+        #     for i, iou in enumerate(bev_results['IoU_per_class']):
+        #         if not np.isnan(iou):
+        #             print(f"  Class {i}: {iou:.4f}")
     
     def save_results(self):
         """Save evaluation results to files"""

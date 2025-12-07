@@ -16,6 +16,17 @@ from ability_data import Ability_CARLA_Data
 from torch.utils.data import DataLoader
 from my_dpmm_model import BNPModel
 
+import pathlib
+import jsonpickle
+import jsonpickle.ext.numpy as jsonpickle_numpy
+import ujson  # Like json but faster
+import gzip
+
+jsonpickle_numpy.register_handlers()
+jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
+
+from utils import print_data_info
+
 
 class FeatureExtractor:
     """
@@ -44,7 +55,7 @@ class FeatureExtractor:
         print(f"Loaded model from {model_path}")
         return model
     
-    def extract_features(self, dataloader, num_batches=None):
+    def extract_features(self, dataloader, max_num_batches=None):
         """
         Extract joined_checkpoint_features from model
         
@@ -53,70 +64,134 @@ class FeatureExtractor:
             samples: corresponding input data for reference
         """
         self.feature_buffer = []
-        self.sample_buffer = []
         
         batch_count = 0
         with torch.no_grad():
-            for batch in tqdm(dataloader, desc="Extracting features"):
-                if num_batches and batch_count >= num_batches:
-                    break
+            # for batch in tqdm(dataloader, desc="Extracting features"):
+            for batch_idx, batch in enumerate(tqdm(dataloader, desc="Extracting features")):
+                with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=bool(self.config.use_amp)):
+                    # if num_batches and batch_count >= num_batches:
+                    #     break
+                        
+                    # Move data to device
+                    # batch = {k: v.to(self.device) if torch.is_tensor(v) else v 
+                    #         for k, v in batch.items()}
                     
-                # Move data to device
-                batch = {k: v.to(self.device) if torch.is_tensor(v) else v 
-                        for k, v in batch.items()}
-                
-                # Forward pass to get features
-                features, samples = self._forward_pass(batch)
-                
-                if features is not None:
-                    self.feature_buffer.append(features.cpu())
-                    self.sample_buffer.append(samples)
-                
-                batch_count += 1
+                    # Forward pass to get features
+                    # print_data_info(batch['rgb'])
+                    features = self._forward_pass(batch)
+                    
+                    if features is not None:
+                        self.feature_buffer.append(features)
+                    
+                    batch_count += 1
         
         if self.feature_buffer:
             all_features = torch.cat(self.feature_buffer, dim=0)
             print(f"Extracted {len(all_features)} feature samples")
-            return all_features, self.sample_buffer
+            return all_features
         else:
-            return None, None
-    
-    def _forward_pass(self, batch):
-        """Perform forward pass and extract joined_checkpoint_features"""
-        try:
-            # Get model outputs
-            with torch.no_grad():
-                pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, \
-                pred_semantic, pred_bev_semantic, pred_depth, pred_bounding_box, \
-                attention_weights, pred_wp_1, selected_path = self.model(
-                    rgb=batch['rgb'],
-                    lidar_bev=batch['lidar_bev'] if 'lidar_bev' in batch else None,
-                    target_point=batch['target_point'],
-                    ego_vel=batch['speed'],
-                    command=batch['command']
-                )
-            
-            # For debugging: print model outputs
-            # print(f"Model outputs - trajectories: {pred_trajectories.shape if pred_trajectories is not None else 'None'}")
-            # print(f"Model outputs - traj_probs: {pred_traj_probs.shape if pred_traj_probs is not None else 'None'}")
-            
-            # Extract the actual joined_checkpoint_features from the model
-            # This depends on your model implementation
-            features = self._extract_joined_features_from_model()
-            print(f"Model outputs - features: {features.shape if features is not None else 'None'}")
-            
-            # # Prepare sample data for reference
-            # samples = {
-            #     'target_point': batch['target_point'].cpu(),
-            #     'speed': batch['speed'].cpu(),
-            #     'command': batch['command'].cpu()
-            # }
-            
-            return features
-            
-        except Exception as e:
-            print(f"Error in forward pass: {e}")
             return None
+    
+    def _forward_pass(self, data):
+        """Perform forward pass and extract joined_checkpoint_features"""
+        # try:
+        # Get model outputs
+
+        if self.config.detect_boxes or self.config.use_plant:
+            bounding_box_label = data['bounding_boxes'].to(self.device, dtype=torch.float32)
+            if not self.config.use_plant:
+                bb_center_heatmap = data['center_heatmap'].to(self.device, dtype=torch.float32)
+                bb_wh = data['wh'].to(self.device, dtype=torch.float32)
+                bb_yaw_class = data['yaw_class'].to(self.device, dtype=torch.long)
+                bb_yaw_res = data['yaw_res'].to(self.device, dtype=torch.float32)
+                bb_offset = data['offset'].to(self.device, dtype=torch.float32)
+                bb_velocity = data['velocity'].to(self.device, dtype=torch.float32)
+                bb_brake_target = data['brake_target'].to(self.device, dtype=torch.long)
+                bb_pixel_weight = data['pixel_weight'].to(self.device, dtype=torch.float32)
+                bb_avg_factor = data['avg_factor'].to(self.device, dtype=torch.float32)
+            else:
+                future_bounding_box_label = data['future_bounding_boxes'].to(self.device, dtype=torch.long)
+        else:
+            bounding_box_label = None
+            bb_center_heatmap = None
+            bb_wh = None
+            bb_yaw_class = None
+            bb_yaw_res = None
+            bb_offset = None
+            bb_velocity = None
+            bb_brake_target = None
+            bb_pixel_weight = None
+            bb_avg_factor = None
+
+        if self.config.use_wp_gru:
+            ego_waypoint = data['ego_waypoints'].to(self.device, dtype=torch.float32)
+        else:
+            ego_waypoint = None
+
+        target_point = data['target_point'].to(self.device, dtype=torch.float32)
+        target_point_next = data['target_point_next'].to(self.device, dtype=torch.float32)
+        command = data['command'].to(self.device, dtype=torch.float32)
+
+        ego_vel = data['speed'].to(self.device, dtype=torch.float32).unsqueeze(1)
+
+        if self.config.use_twohot_target_speeds:
+            target_speed = data['target_speed_twohot'].to(self.device, dtype=torch.float32)
+        else:
+            target_speed = data['target_speed'].to(self.device, dtype=torch.long)
+
+
+        checkpoint = data['route'][:, :self.config.predict_checkpoint_len].to(self.device, dtype=torch.float32)
+        rgb = data['rgb'].to(self.device, dtype=torch.float32)
+        if self.config.use_semantic:
+            semantic_label = data['semantic'].to(self.device, dtype=torch.long)
+        else:
+            semantic_label = None
+        if self.config.use_bev_semantic:
+            bev_semantic_label = data['bev_semantic'].to(self.device, dtype=torch.long)
+        else:
+            bev_semantic_label = None
+        if self.config.use_depth:
+            depth_label = data['depth'].to(self.device, dtype=torch.float32)
+        else:
+            depth_label = None
+        if self.config.lidar_seq_len > 1:
+            lidar = data['temporal_lidar'].to(self.device, dtype=torch.float32)
+        else:
+            lidar = data['lidar'].to(self.device, dtype=torch.float32)
+
+        with torch.no_grad():
+            pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, \
+            pred_semantic, pred_bev_semantic, pred_depth, pred_bounding_box, \
+            attention_weights, pred_wp_1, selected_path = self.model(
+                rgb=rgb,
+                lidar_bev=lidar,
+                target_point=target_point,
+                ego_vel=ego_vel,
+                command=command
+            )
+        
+        # For debugging: print model outputs
+        # print(f"Model outputs - trajectories: {pred_trajectories.shape if pred_trajectories is not None else 'None'}")
+        # print(f"Model outputs - traj_probs: {pred_traj_probs.shape if pred_traj_probs is not None else 'None'}")
+        
+        # Extract the actual joined_checkpoint_features from the model
+        # This depends on your model implementation
+        features = self._extract_joined_features_from_model()
+        # print(f"Model outputs - features: {features.shape if features is not None else 'None'}")
+        
+        # # Prepare sample data for reference
+        # samples = {
+        #     'target_point': batch['target_point'].cpu(),
+        #     'speed': batch['speed'].cpu(),
+        #     'command': batch['command'].cpu()
+        # }
+        
+        return features
+            
+        # except Exception as e:
+        #     print(f"Error in forward pass: {e}")
+        #     return None
     
     def _extract_joined_features_from_model(self):
         """
@@ -125,8 +200,9 @@ class FeatureExtractor:
         """
         # Method 1: If your model stores intermediate features
         if hasattr(self.model, 'last_joined_features'):
-            print('get joined_checkpoint_features from last_joined_features')
-            return self.model.last_joined_features.cpu()
+            # print('get joined_checkpoint_features from last_joined_features')
+            # print(f'self.model.last_joined_features shape: {self.model.last_joined_features.shape}')
+            return self.model.last_joined_features.detach()
         
         else:
             print('get no joined_checkpoint_features')
@@ -172,9 +248,12 @@ class DpmmFeatureTrainer:
         self.feature_dir = self.save_dir / "extracted_features"
         self.cluster_dir.mkdir(exist_ok=True)
         self.feature_dir.mkdir(exist_ok=True)
-        
+
+        self.dpmm_save_dir = self.save_dir / "dpmm_model"
+        self.dpmm_save_dir.mkdir(exist_ok=True)
+
         self.dpmm = BNPModel(
-            save_dir=str(self.save_dir),
+            save_dir=str(self.dpmm_save_dir),
             gamma0=dpmm_config["gamma0"],
             num_lap=dpmm_config["num_lap"],
             sF=dpmm_config["sF"]
@@ -183,7 +262,7 @@ class DpmmFeatureTrainer:
             self.dpmm.load_model(load_path)
             print(f'DPMM model load from {load_path}.')
         
-    def train_dpmm_on_features(self, features, samples, dataset_name, epochs=1, iterations_per_epoch=10):
+    def train_dpmm_on_features(self, features, dataset_name, epochs=1, iterations_per_epoch=10):
         """
         Train DPMM on extracted features with periodic sampling
         """
@@ -207,7 +286,8 @@ class DpmmFeatureTrainer:
                 start_idx = iteration * samples_per_iteration
                 end_idx = min((iteration + 1) * samples_per_iteration, num_samples)
                 current_features = features_flat[start_idx:end_idx]
-                
+                # print_data_info(current_features)
+
                 if iteration > 0 or epoch > 0:
                     # Sample from DPMM and combine with new data
                     K = len(self.dpmm.components)
@@ -218,6 +298,7 @@ class DpmmFeatureTrainer:
                     
                     # Sample from current DPMM
                     sampled_features = self.dpmm.sample_all(num_samples=num_to_sample)
+                    # print_data_info(sampled_features)
                     
                     # Combine sampled and new features
                     combined_features = torch.cat([sampled_features, current_features], dim=0)
@@ -238,13 +319,12 @@ class DpmmFeatureTrainer:
                         epoch=epoch,
                         iteration=iteration,
                         features=current_features,
-                        samples=samples[start_idx:end_idx] if samples else None
                     )
                     
                     # Print current cluster info
                     self.print_cluster_info(epoch, iteration)
     
-    def save_tracked_clusters(self, dataset_name, epoch, iteration, features=None, samples=None):
+    def save_tracked_clusters(self, dataset_name, epoch, iteration, features=None):
         """Save tracked clusters in multiple formats"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_name = f"{dataset_name}-epoch{epoch:02d}-iter{iteration:03d}-{timestamp}"
@@ -274,9 +354,6 @@ class DpmmFeatureTrainer:
                 'mean': features.mean(dim=0).tolist(),
                 'std': features.std(dim=0).tolist()
             }
-        
-        if samples is not None:
-            save_data['samples'] = samples
         
         # Save in multiple formats
         self._save_as_pickle(save_data, base_name)
@@ -347,26 +424,44 @@ class DpmmFeatureTrainer:
 
 def main():
     """Main execution function"""
-    # Configuration
-    config = GlobalConfig()
     
     # DPMM configuration
     dpmm_config = {
-        "gamma0": 5.0,
+        "gamma0": 5,
         "num_lap": 1000,
         "sF": 1e-5,
         "dpmm_update_per_epoch": 10
     }
     
     # Paths - adjust these according to your setup
-    model_path = "/path/to/your/trained/model.pth"
-    dataset_root = "/path/to/your/dataset"
-    output_dir = "./dpmm_feature_results"
+    dataset_root = "/home/syb/b2d_mini_v2"
+
+    model_folder = "./log/syb_train_noMoe_3-ot"   
+    dpmm_load_path = None
+
+    model_path = os.path.join(model_folder, "model_0030.pth")
+    config_path = os.path.join(model_folder, "config.json")
+        # Load the config saved during training
+    with open(config_path, 'rt', encoding='utf-8') as f:
+      json_config = f.read()
+
+    loaded_config = jsonpickle.decode(json_config)
+
+    # Generate new config for the case that it has new variables.
+    config = GlobalConfig()
+    # Overwrite all properties that were set in the saved config.
+    config.__dict__.update(loaded_config.__dict__)
     
     # Select ability for dataset
-    ability = "Emergency_Brake"  # Adjust based on your needs
+    ability = config.selected_ability  # Adjust based on your needs
 
     dataset_name = ability  # Adjust based on your dataset
+
+
+    output_dir = os.path.join("/home/syb/carla_garage/dpmm_feature/noMoe_demo", ability)
+    # dpmm_save_dir = os.path.join(output_dir, "dpmm_model")
+    # os.makedirs(dpmm_save_dir)
+    output_dir = str(output_dir)
     
     # Setup device
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -375,11 +470,16 @@ def main():
     # Create dataset and dataloader
     print("Loading dataset...")
     dataset = Ability_CARLA_Data(
+        # root=dataset_root,
+        # config=config,
+        # estimate_class_distributions=config.estimate_class_distributions,
+        # estimate_sem_distribution=config.estimate_semantic_distribution,
+        # shared_dict=None,
+        # validation=False,
         root=dataset_root,
         config=config,
-        estimate_class_distributions=config.estimate_class_distributions,
-        estimate_sem_distribution=config.estimate_semantic_distribution,
         shared_dict=None,
+        rank=0,
         validation=False,
         ability=ability
     )
@@ -398,9 +498,9 @@ def main():
     
     # Extract features (limit batches for testing)
     print("Extracting features...")
-    features, samples = feature_extractor.extract_features(
+    features = feature_extractor.extract_features(
         dataloader, 
-        num_batches=20  # Adjust based on your needs
+        max_num_batches=None  # Adjust based on your needs
     )
     
     if features is None:
@@ -412,7 +512,6 @@ def main():
     features_save_path.parent.mkdir(parents=True, exist_ok=True)
     torch.save({
         'features': features,
-        'samples': samples,
         'dataset_name': dataset_name,
         'config': dpmm_config
     }, features_save_path)
@@ -420,20 +519,19 @@ def main():
     
     # Train DPMM on features
     print("Training DPMM on extracted features...")
-    dpmm_trainer = DpmmFeatureTrainer(dpmm_config, output_dir)
+    dpmm_trainer = DpmmFeatureTrainer(dpmm_config, output_dir, load_path=dpmm_load_path)
     
     dpmm_trainer.train_dpmm_on_features(
         features=features,
-        samples=samples,
         dataset_name=dataset_name,
-        epochs=2,  # Adjust based on your needs
-        iterations_per_epoch=10  # Adjust based on your needs
+        epochs=1,  # Adjust based on your needs
+        iterations_per_epoch=20  # Adjust based on your needs
     )
     
     # Save final DPMM model
-    final_dpmm_path = Path(output_dir) / "final_dpmm_model"
-    dpmm_trainer.dpmm.save_model(str(final_dpmm_path))
-    print(f"Saved final DPMM model to {final_dpmm_path}")
+    dpmm_path = Path(output_dir) / "dpmm_model"
+    dpmm_trainer.dpmm.save_model(str(dpmm_path))
+    print(f"Saved DPMM model to {dpmm_path}")
     
     print("DPMM feature training completed!")
 

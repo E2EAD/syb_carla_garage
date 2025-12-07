@@ -89,19 +89,19 @@ class FeatureAnalysis:
 def create_feature_extraction_config():
     """Create configuration template for feature extraction"""
     config = {
-        "model_path": "/path/to/your/model.pth",
-        "dataset_root": "/path/to/your/dataset",
+        "model_path": "./log/syb_train_noMoe_3-ot/model_0030.pth",
+        "dataset_root": "/home/syb/b2d_mini_v2",
         "abilities": ["Emergency_Brake", "Give_Way", "Overtaking", "Merging", "Traffic_Sign"],
-        "output_dir": "./dpmm_feature_results",
+        "output_dir": "./dpmm_fuseFeat/fuseFeat_dpmm_demo",
         "dpmm_config": {
             "gamma0": 5.0,
             "num_lap": 1000,
             "sF": 1e-5,
-            "dpmm_update_per_epoch": 4
+            "dpmm_update_per_epoch": 10
         },
         "training": {
             "epochs": 1,
-            "iterations_per_epoch": 50,
+            # "iterations_per_epoch": 50,
             "batch_size": 8,
             # "num_batches_per_ability": 20
         }

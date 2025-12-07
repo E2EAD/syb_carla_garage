@@ -77,7 +77,7 @@ class AnchorProjection(nn.Module):
         
         return temporal_features
 
-class FrontDoorEncoder(nn.Module):
+class TrajFrontDoorEncoder(nn.Module):
     """
     前门编码器 - 处理GRU特征和anchor特征的交互
     """

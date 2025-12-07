@@ -50,3 +50,4 @@ then store the tracked clusters(id, mu, var) into a pkl/pt/npz or any suitable d
 +exp_time+'/track_cluster_log/'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-tracked_clusters.pkl/pt/etc". 
 what's more i want to monitor the number of the cluster after every epoch on tensor board
 '''
+6. use the metrics (FWT, NBT, AUC) from the LEBRO
