@@ -82,13 +82,14 @@ class FeatureExtractor:
                     features = self._forward_pass(batch)
                     
                     if features is not None:
-                        self.feature_buffer.append(features)
+                        self.feature_buffer.append(features)  # might need to save every several batches
                     
                     batch_count += 1
         
         if self.feature_buffer:
             all_features = torch.cat(self.feature_buffer, dim=0)
             print(f"Extracted {len(all_features)} feature samples")
+            print_data_info(all_features)
             return all_features
         else:
             return None
@@ -262,7 +263,7 @@ class DpmmFeatureTrainer:
             self.dpmm.load_model(load_path)
             print(f'DPMM model load from {load_path}.')
         
-    def train_dpmm_on_features(self, features, dataset_name, epochs=1, iterations_per_epoch=10):
+    def train_dpmm_on_features(self, features, dataset_name, epochs=1, iterations_per_epoch=1):
         """
         Train DPMM on extracted features with periodic sampling
         """
@@ -288,23 +289,23 @@ class DpmmFeatureTrainer:
                 current_features = features_flat[start_idx:end_idx]
                 # print_data_info(current_features)
 
-                if iteration > 0 or epoch > 0:
-                    # Sample from DPMM and combine with new data
-                    K = len(self.dpmm.components)
-                    new_data_ratio = 1 / (1 + K)
-                    num_to_sample = int((1 - new_data_ratio) * len(current_features) / new_data_ratio)
-                    
-                    print(f"Sampling {num_to_sample} from DPMM, adding {len(current_features)} new features")
-                    
-                    # Sample from current DPMM
-                    sampled_features = self.dpmm.sample_all(num_samples=num_to_sample)
-                    # print_data_info(sampled_features)
-                    
-                    # Combine sampled and new features
-                    combined_features = torch.cat([sampled_features, current_features], dim=0)
-                else:
-                    # First iteration - just use current features
-                    combined_features = current_features
+                # if iteration > 0 or epoch > 0:
+                # Sample from DPMM and combine with new data
+                K = len(self.dpmm.components)
+                new_data_ratio = 1 / (1 + K)
+                num_to_sample = int((1 - new_data_ratio) * len(current_features) / new_data_ratio)
+                
+                print(f"Sampling {num_to_sample} from DPMM, adding {len(current_features)} new features")
+                
+                # Sample from current DPMM
+                sampled_features = self.dpmm.sample_all(num_samples=num_to_sample)
+                # print_data_info(sampled_features)
+                
+                # Combine sampled and new features
+                combined_features = torch.cat([sampled_features, current_features], dim=0)
+                # else:
+                #     # First iteration - just use current features
+                #     combined_features = current_features
                 
                 # Clean data
                 combined_features = self._purge_invalid_values(combined_features, "combined_features")
@@ -434,10 +435,11 @@ def main():
     }
     
     # Paths - adjust these according to your setup
-    dataset_root = "/home/syb/b2d_mini_v2"
+    # dataset_root = "/home/syb/b2d_mini_v2"  # /media/syb/syb_disk_2/b2d_base_v3/carla_dataset
+    dataset_root = '/media/syb/syb_disk_2/b2d_base_v3/carla_dataset'
 
-    model_folder = "./log/syb_train_noMoe_3-ot"   
-    dpmm_load_path = None
+    model_folder = "./log/syb_train_noMoe_0-eb"  # need choose
+    dpmm_load_path = None  #'./dpmm_feature/noMoe_demo/Emergency_Brake/dpmm_model'  # need choose'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
     model_path = os.path.join(model_folder, "model_0030.pth")
     config_path = os.path.join(model_folder, "config.json")
@@ -525,7 +527,7 @@ def main():
         features=features,
         dataset_name=dataset_name,
         epochs=1,  # Adjust based on your needs
-        iterations_per_epoch=20  # Adjust based on your needs
+        iterations_per_epoch=2  # Adjust based on your needs
     )
     
     # Save final DPMM model

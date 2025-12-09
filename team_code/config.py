@@ -859,8 +859,8 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
-    self.selected_ability = 'Emergency_Brake'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
+    self.selected_ability = 'Traffic_Sign'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
     # self.score_loss_weight = 1
@@ -875,7 +875,7 @@ class GlobalConfig:
     self.tf_de_dropout = 0.05
     # self.tf_de_tgt_dim = 15
 
-    self.temperature = 1
+    self.temperature = 0.5
 
     # -----------------------------------------------------------------------------
     # Dataset root

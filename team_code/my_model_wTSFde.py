@@ -23,7 +23,7 @@ from nav_planner import LateralPIDController, get_throttle
 from utils import print_data_info
 # from my_query_traj_decoder import PlanningTrajectoryDecoder
 from traj_front_door_encoder import TrajFrontDoorEncoder
-from speed_front_door_encoder import SpeedFrontDoorEncoder
+from speed_front_door_encoder_v2 import SpeedFrontDoorEncoder
 
 
 class LidarCenterNet(nn.Module):

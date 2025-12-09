@@ -265,13 +265,19 @@ class PlanningTrajectoryDecoder(nn.Module):
         # Filter out anchor parameters
         local_state = {}
         expert_params = {}
+
+        # all_keys = []
+        # for k in state_dict.keys():
+        #     all_keys.append(k)
+
+        # print(f'all keys ifor QTD: {all_keys}')
         
         for key, value in state_dict.items():
             # print(key)
-            if key.endswith('.anchors') or 'anchors' in key and key not in self.state_dict():
+            if key.endswith('.anchors') or 'anchors' in key: # and key not in self.state_dict():
                 print(f"⚠️ 跳过 anchor 数据: {key} (shape: {value.shape})")
                 continue
-            if key.endswith('.cluster_ids') or 'cluster_ids' in key and key not in self.state_dict():
+            if key.endswith('.cluster_ids') or 'cluster_ids' in key: # and key not in self.state_dict():
                 print(f"⚠️ 跳过 cluster_ids 数据: {key}")
                 continue
             if key.startswith('experts.') or '.experts.' in key:
@@ -280,6 +286,7 @@ class PlanningTrajectoryDecoder(nn.Module):
                 local_state[key] = value
         
         print(f"Found {len(expert_params)} expert parameters in checkpoint")
+        # print(f'local_keys: {local_state.keys()}')
         
         if not expert_params:
             print("No expert parameters found in checkpoint")
@@ -294,6 +301,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         for key, value in state_dict.items():
             if key.endswith('.cluster_ids') or 'cluster_ids' in key:
                 ckpt_cluster_ids = value.cpu().numpy().tolist()
+                print('got ckpt_cluster_ids.')
                 break
         
         if ckpt_cluster_ids is None:

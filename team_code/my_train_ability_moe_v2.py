@@ -95,52 +95,166 @@ except (ModuleNotFoundError, ImportError) as e:
 #     model.load_state_dict(filtered_state_dict, strict=False)
 #     return model
 
-def load_moe_model_checkpoint(model, checkpoint_path, device):
+# def load_moe_model_checkpoint(model, checkpoint_path, device):
+#     """
+#     统一加载模型 checkpoint，支持 anchor 数量变化时自动扩展 experts
+#     """
+#     # 加载 checkpoint
+#     checkpoint = torch.load(checkpoint_path, map_location=device)
+#     checkpoint_state_dict = checkpoint
+#     if isinstance(checkpoint, dict):
+#         if 'state_dict' in checkpoint:
+#             checkpoint_state_dict = checkpoint['state_dict']
+#         elif 'model_state_dict' in checkpoint:
+#             checkpoint_state_dict = checkpoint['model_state_dict']
+
+#     # 处理 DDP 保存的模型（去掉 'module.' 前缀）
+#     if any(k.startswith('module.') for k in checkpoint_state_dict):
+#         checkpoint_state_dict = {
+#             k[7:] if k.startswith('module.') else k: v 
+#             for k, v in checkpoint_state_dict.items()
+#         }
+
+#     model_state_dict = model.state_dict()
+
+#     # Step 1: 过滤掉 .anchors 和 .cluster_ids 参数
+#     filtered_state_dict = {}
+#     for key, value in checkpoint_state_dict.items():
+#         if (key.endswith('.anchors') or 'anchors' in key or 
+#             key.endswith('.cluster_ids') or 'cluster_ids' in key) and key not in model_state_dict:
+#             print(f"⚠️ 跳过 anchor/cluster_id 数据: {key} (shape: {value.shape})")
+#             continue
+#         if key in model_state_dict:
+#             if model_state_dict[key].shape == value.shape:
+#                 filtered_state_dict[key] = value
+#             else:
+#                 print(f"⚠️ 形状不匹配，跳过: {key} | ckpt: {value.shape}, model: {model_state_dict[key].shape}")
+#         else:
+#             print(f"⚠️ 模型中不存在，跳过: {key}")
+
+#     # Step 2: 检查是否是 PlanningTrajectoryDecoder 并支持 resize
+#     if hasattr(model.query_traj_decoder, 'load_state_dict_with_resize'):
+#         print("🔍 检测到 PlanningTrajectoryDecoder，启用专家扩展加载...")
+#         model.query_traj_decoder.load_state_dict_with_resize(filtered_state_dict, strict=False)
+#     else:
+#         # 回退到普通加载
+#         print("🔧 使用普通加载方式...")
+#         model.load_state_dict(filtered_state_dict, strict=False)
+
+#     print("✅ 模型权重加载完成")
+#     return model
+
+def load_hybrid_model_checkpoint(model, checkpoint_path, device, skip_anchors=True):
     """
-    统一加载模型 checkpoint，支持 anchor 数量变化时自动扩展 experts
+    混合加载模型checkpoint：
+    - 解码器部分：使用专门的专家扩展加载
+    - 感知主干和其他部分：使用标准加载
+    - 可选的anchor数据跳过
     """
-    # 加载 checkpoint
+    print(f"🔍 开始加载模型checkpoint: {checkpoint_path}")
+    
+    # 加载checkpoint
     checkpoint = torch.load(checkpoint_path, map_location=device)
     checkpoint_state_dict = checkpoint
+
+    origin_keys = []
+    # processed_keys = []
+    
+    # 处理不同的checkpoint格式
     if isinstance(checkpoint, dict):
         if 'state_dict' in checkpoint:
             checkpoint_state_dict = checkpoint['state_dict']
+            print("📦 使用'state_dict'键")
         elif 'model_state_dict' in checkpoint:
             checkpoint_state_dict = checkpoint['model_state_dict']
-
-    # 处理 DDP 保存的模型（去掉 'module.' 前缀）
-    if any(k.startswith('module.') for k in checkpoint_state_dict):
+            print("📦 使用'model_state_dict'键")
+        else:
+            print("📦 使用顶级字典")
+            # for k in checkpoint.keys():
+            #    origin_keys.append(k)
+            # print(len(origin_keys))
+            # print(origin_keys)
+    
+    # 处理DDP保存的模型（去掉'module.'前缀）
+    if any(k.startswith('module.') for k in checkpoint_state_dict.keys()):
+        print("🔄 移除DDP前缀'module.'")
         checkpoint_state_dict = {
             k[7:] if k.startswith('module.') else k: v 
             for k, v in checkpoint_state_dict.items()
         }
-
+    
     model_state_dict = model.state_dict()
-
-    # Step 1: 过滤掉 .anchors 和 .cluster_ids 参数
-    filtered_state_dict = {}
+    
+    # 分离解码器参数和其他参数
+    decoder_params = {}
+    other_params = {}
+    
+    # 定义解码器相关的键（根据你的实际模型结构）
+    decoder_prefixes = ['query_traj_decoder']
+    
     for key, value in checkpoint_state_dict.items():
-        if (key.endswith('.anchors') or 'anchors' in key or 
-            key.endswith('.cluster_ids') or 'cluster_ids' in key) and key not in model_state_dict:
-            print(f"⚠️ 跳过 anchor/cluster_id 数据: {key} (shape: {value.shape})")
-            continue
-        if key in model_state_dict:
-            if model_state_dict[key].shape == value.shape:
-                filtered_state_dict[key] = value
-            else:
-                print(f"⚠️ 形状不匹配，跳过: {key} | ckpt: {value.shape}, model: {model_state_dict[key].shape}")
+        # # 1. 首先跳过需要跳过的参数
+        # if skip_anchors and (key.endswith('.anchors') or 'anchors' in key):
+        #     print(f"⏭️ 跳过anchor参数: {key}")
+        #     continue
+        
+        # 2. 判断是否属于解码器
+        is_decoder_param = any(key.startswith(prefix) or f'.{prefix}.' in key for prefix in decoder_prefixes)
+        
+        if is_decoder_param:
+            decoder_params[key] = value
         else:
-            print(f"⚠️ 模型中不存在，跳过: {key}")
+            other_params[key] = value
+    
+    print(f"📊 参数分类统计:")
+    print(f"   - 解码器参数: {len(decoder_params)} 个")
+    print(f"   - 感知主干,etc参数: {len(other_params)} 个")
+    
+    # 步骤1: 加载感知主干,etc参数（严格模式）
+    print("\n📥 开始加载感知主干,etc参数...")
+    other_missing, other_unexpected = model.load_state_dict(other_params, strict=False)
+    
+    if other_missing:
+        print(f"⚠️ after loading 感知主干,etc, 缺失参数: {len(other_missing)} 个")
+        for key in other_missing[:10]:  # 只显示前10个
+            print(f"   - {key}")
+    
+    if other_unexpected:
+        print(f"⚠️ after loading 感知主干,etc, 意外参数: {len(other_unexpected)} 个")
+        for key in other_unexpected[:5]:  # 只显示前5个
+            print(f"   - {key}")
+        if len(other_unexpected) > 5:
+            print(f"   ... 还有 {len(other_unexpected) - 5} 个")
+    
+    # 步骤2: 加载解码器参数（使用专门的扩展加载）
+    print("\n📥 开始加载解码器参数...")
+    if hasattr(model, 'query_traj_decoder') and hasattr(model.query_traj_decoder, 'load_state_dict_with_resize'):
+        print("🔧 检测到PlanningTrajectoryDecoder，使用专家扩展加载...")
+        
+        # 需要去除前缀，因为解码器期望自己的参数名
+        decoder_params_for_decoder = {}
+        prefix_to_remove = 'query_traj_decoder.'
+        
+        for key, value in decoder_params.items():
+            if key.startswith(prefix_to_remove):
+                new_key = key[len(prefix_to_remove):]
+                decoder_params_for_decoder[new_key] = value
+            elif 'query_traj_decoder.' in key:
+                # 处理包含路径的情况
+                parts = key.split('query_traj_decoder.')
+                new_key = parts[1] if len(parts) > 1 else key
+                decoder_params_for_decoder[new_key] = value
+            else:
+                # 直接保留（可能是wp_decoder等其他解码器）
+                decoder_params_for_decoder[key] = value
 
-    # Step 2: 检查是否是 PlanningTrajectoryDecoder 并支持 resize
-    if hasattr(model.query_traj_decoder, 'load_state_dict_with_resize'):
-        print("🔍 检测到 PlanningTrajectoryDecoder，启用专家扩展加载...")
-        model.query_traj_decoder.load_state_dict_with_resize(filtered_state_dict, strict=False)
+        # print(f'len for decoder_params_for_decoder: {len(decoder_params_for_decoder)}')
+        
+        model.query_traj_decoder.load_state_dict_with_resize(decoder_params_for_decoder, strict=False)
     else:
-        # 回退到普通加载
-        print("🔧 使用普通加载方式...")
-        model.load_state_dict(filtered_state_dict, strict=False)
-
+        print("🔄 使用普通方式加载解码器参数...")
+        model.load_state_dict(decoder_params, strict=False)
+    
     print("✅ 模型权重加载完成")
     return model
 
@@ -821,7 +935,7 @@ def main():
     #         raise e
     # 使用新加载函数
     try:
-        model = load_moe_model_checkpoint(model, args.load_file, device)
+        model = load_hybrid_model_checkpoint(model, args.load_file, device)
         print("✅ 模型加载成功")
     except Exception as e:
         print(f"❌ 加载失败: {e}")
