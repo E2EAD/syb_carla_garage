@@ -30,11 +30,10 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_moe_v2 import LidarCenterNet
+from my_model_wTFFde import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
-import re
 
 jsonpickle_numpy.register_handlers()
 jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
@@ -47,367 +46,32 @@ try:
 except (ModuleNotFoundError, ImportError) as e:
   print(e)
 
-# def load_checkpoint_with_anchor_fix(model, checkpoint_path, device, strict=False):
-#     """加载检查点，自动处理锚点不匹配问题"""
-#     checkpoint = torch.load(checkpoint_path, map_location=device)
-#     model_state_dict = model.state_dict()
-#     checkpoint_state_dict = checkpoint if not isinstance(checkpoint, dict) else checkpoint.get('model_state_dict', checkpoint)
-    
-#     # 过滤掉不匹配的键
-#     filtered_state_dict = {}
-#     for key, value in checkpoint_state_dict.items():
-#         if key in model_state_dict:
-#             if model_state_dict[key].shape == value.shape:
-#                 filtered_state_dict[key] = value
-#             else:
-#                 print(f"跳过不匹配的参数: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
-#         else:
-#             print(f"跳过不存在的参数: {key}")
-    
-#     # 加载过滤后的状态字典
-#     model.load_state_dict(filtered_state_dict, strict=False)
-#     return model
-
-# def load_checkpoint_ignore_anchors(model, checkpoint_path, device, strict=False):
-#     """加载检查点，只跳过anchor数据本身，保留相关网络参数"""
-#     checkpoint = torch.load(checkpoint_path, map_location=device)
-#     model_state_dict = model.state_dict()
-#     checkpoint_state_dict = checkpoint if not isinstance(checkpoint, dict) else checkpoint.get('model_state_dict', checkpoint)
-    
-#     # 过滤状态字典
-#     filtered_state_dict = {}
-    
-#     for key, value in checkpoint_state_dict.items():
-#         # 只跳过anchor数据本身，不跳过anchor相关的网络参数
-#         if key.endswith('.anchors') and 'anchor' in key:
-#             print(f"跳过anchor数据: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
-#             continue
-            
-#         if key in model_state_dict:
-#             if model_state_dict[key].shape == value.shape:
-#                 filtered_state_dict[key] = value
-#             else:
-#                 print(f"跳过不匹配的参数: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
-#         else:
-#             print(f"跳过不存在的参数: {key}")
-    
-#     # 加载过滤后的状态字典
-#     model.load_state_dict(filtered_state_dict, strict=False)
-#     return model
-
-# def load_moe_model_checkpoint(model, checkpoint_path, device):
-#     """
-#     统一加载模型 checkpoint，支持 anchor 数量变化时自动扩展 experts
-#     """
-#     # 加载 checkpoint
-#     checkpoint = torch.load(checkpoint_path, map_location=device)
-#     checkpoint_state_dict = checkpoint
-#     if isinstance(checkpoint, dict):
-#         if 'state_dict' in checkpoint:
-#             checkpoint_state_dict = checkpoint['state_dict']
-#         elif 'model_state_dict' in checkpoint:
-#             checkpoint_state_dict = checkpoint['model_state_dict']
-
-#     # 处理 DDP 保存的模型（去掉 'module.' 前缀）
-#     if any(k.startswith('module.') for k in checkpoint_state_dict):
-#         checkpoint_state_dict = {
-#             k[7:] if k.startswith('module.') else k: v 
-#             for k, v in checkpoint_state_dict.items()
-#         }
-
-#     model_state_dict = model.state_dict()
-
-#     # Step 1: 过滤掉 .anchors 和 .cluster_ids 参数
-#     filtered_state_dict = {}
-#     for key, value in checkpoint_state_dict.items():
-#         if (key.endswith('.anchors') or 'anchors' in key or 
-#             key.endswith('.cluster_ids') or 'cluster_ids' in key) and key not in model_state_dict:
-#             print(f"⚠️ 跳过 anchor/cluster_id 数据: {key} (shape: {value.shape})")
-#             continue
-#         if key in model_state_dict:
-#             if model_state_dict[key].shape == value.shape:
-#                 filtered_state_dict[key] = value
-#             else:
-#                 print(f"⚠️ 形状不匹配，跳过: {key} | ckpt: {value.shape}, model: {model_state_dict[key].shape}")
-#         else:
-#             print(f"⚠️ 模型中不存在，跳过: {key}")
-
-#     # Step 2: 检查是否是 PlanningTrajectoryDecoder 并支持 resize
-#     if hasattr(model.query_traj_decoder, 'load_state_dict_with_resize'):
-#         print("🔍 检测到 PlanningTrajectoryDecoder，启用专家扩展加载...")
-#         model.query_traj_decoder.load_state_dict_with_resize(filtered_state_dict, strict=False)
-#     else:
-#         # 回退到普通加载
-#         print("🔧 使用普通加载方式...")
-#         model.load_state_dict(filtered_state_dict, strict=False)
-
-#     print("✅ 模型权重加载完成")
-#     return model
-
-def load_hybrid_model_checkpoint(model, checkpoint_path, device, skip_anchors=True):
-    """
-    混合加载模型checkpoint：
-    - 解码器部分：使用专门的专家扩展加载
-    - 感知主干和其他部分：使用标准加载
-    - 可选的anchor数据跳过
-    """
-    print(f"🔍 开始加载模型checkpoint: {checkpoint_path}")
-    
-    # 加载checkpoint
+def load_checkpoint_ignore_anchors(model, checkpoint_path, device, strict=False):
+    """加载检查点，只跳过anchor数据本身，保留相关网络参数"""
     checkpoint = torch.load(checkpoint_path, map_location=device)
-    checkpoint_state_dict = checkpoint
-
-    origin_keys = []
-    # processed_keys = []
-    
-    # 处理不同的checkpoint格式
-    if isinstance(checkpoint, dict):
-        if 'state_dict' in checkpoint:
-            checkpoint_state_dict = checkpoint['state_dict']
-            print("📦 使用'state_dict'键")
-        elif 'model_state_dict' in checkpoint:
-            checkpoint_state_dict = checkpoint['model_state_dict']
-            print("📦 使用'model_state_dict'键")
-        else:
-            print("📦 使用顶级字典")
-            # for k in checkpoint.keys():
-            #    origin_keys.append(k)
-            # print(len(origin_keys))
-            # print(origin_keys)
-    
-    # 处理DDP保存的模型（去掉'module.'前缀）
-    if any(k.startswith('module.') for k in checkpoint_state_dict.keys()):
-        print("🔄 移除DDP前缀'module.'")
-        checkpoint_state_dict = {
-            k[7:] if k.startswith('module.') else k: v 
-            for k, v in checkpoint_state_dict.items()
-        }
-    
     model_state_dict = model.state_dict()
+    checkpoint_state_dict = checkpoint if not isinstance(checkpoint, dict) else checkpoint.get('model_state_dict', checkpoint)
     
-    # 分离解码器参数和其他参数
-    decoder_params = {}
-    other_params = {}
-    
-    # 定义解码器相关的键（根据你的实际模型结构）
-    decoder_prefixes = ['query_traj_decoder']
+    # 过滤状态字典
+    filtered_state_dict = {}
     
     for key, value in checkpoint_state_dict.items():
-        # # 1. 首先跳过需要跳过的参数
-        # if skip_anchors and (key.endswith('.anchors') or 'anchors' in key):
-        #     print(f"⏭️ 跳过anchor参数: {key}")
-        #     continue
-        
-        # 2. 判断是否属于解码器
-        is_decoder_param = any(key.startswith(prefix) or f'.{prefix}.' in key for prefix in decoder_prefixes)
-        
-        if is_decoder_param:
-            decoder_params[key] = value
+        # 只跳过anchor数据本身，不跳过anchor相关的网络参数
+        if key.endswith('.anchors') and 'anchors' in key:
+            print(f"跳过anchor数据: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
+            continue
+            
+        if key in model_state_dict:
+            if model_state_dict[key].shape == value.shape:
+                filtered_state_dict[key] = value
+            else:
+                print(f"跳过不匹配的参数: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
         else:
-            other_params[key] = value
+            print(f"跳过不存在的参数: {key}")
     
-    print(f"📊 参数分类统计:")
-    print(f"   - 解码器参数: {len(decoder_params)} 个")
-    print(f"   - 感知主干,etc参数: {len(other_params)} 个")
-    
-    # 步骤1: 加载感知主干,etc参数（严格模式）
-    print("\n📥 开始加载感知主干,etc参数...")
-    other_missing, other_unexpected = model.load_state_dict(other_params, strict=False)
-    
-    if other_missing:
-        print(f"⚠️ after loading 感知主干,etc, 缺失参数: {len(other_missing)} 个")
-        for key in other_missing[:10]:  # 只显示前10个
-            print(f"   - {key}")
-    
-    if other_unexpected:
-        print(f"⚠️ after loading 感知主干,etc, 意外参数: {len(other_unexpected)} 个")
-        for key in other_unexpected[:5]:  # 只显示前5个
-            print(f"   - {key}")
-        if len(other_unexpected) > 5:
-            print(f"   ... 还有 {len(other_unexpected) - 5} 个")
-    
-    # 步骤2: 加载解码器参数（使用专门的扩展加载）
-    print("\n📥 开始加载解码器参数...")
-    if hasattr(model, 'query_traj_decoder') and hasattr(model.query_traj_decoder, 'load_state_dict_with_resize'):
-        print("🔧 检测到PlanningTrajectoryDecoder，使用专家扩展加载...")
-        
-        # 需要去除前缀，因为解码器期望自己的参数名
-        decoder_params_for_decoder = {}
-        prefix_to_remove = 'query_traj_decoder.'
-        
-        for key, value in decoder_params.items():
-            if key.startswith(prefix_to_remove):
-                new_key = key[len(prefix_to_remove):]
-                decoder_params_for_decoder[new_key] = value
-            elif 'query_traj_decoder.' in key:
-                # 处理包含路径的情况
-                parts = key.split('query_traj_decoder.')
-                new_key = parts[1] if len(parts) > 1 else key
-                decoder_params_for_decoder[new_key] = value
-            else:
-                # 直接保留（可能是wp_decoder等其他解码器）
-                decoder_params_for_decoder[key] = value
-
-        # print(f'len for decoder_params_for_decoder: {len(decoder_params_for_decoder)}')
-        
-        model.query_traj_decoder.load_state_dict_with_resize(decoder_params_for_decoder, strict=False)
-    else:
-        print("🔄 使用普通方式加载解码器参数...")
-        model.load_state_dict(decoder_params, strict=False)
-    
-    print("✅ 模型权重加载完成")
+    # 加载过滤后的状态字典
+    model.load_state_dict(filtered_state_dict, strict=False)
     return model
-
-
-def load_partial_optimizer_state(
-    optimizer: torch.optim.Optimizer,
-    model: torch.nn.Module,
-    load_file: str,  # e.g., "model_0005.pth"
-    device: str
-):
-    """
-    部分加载 optimizer 状态，支持 anchor 数量增加。
-    - 仅恢复当前模型中存在的参数的 optimizer 状态（如旧专家）
-    - 新参数由 optimizer 自动初始化其状态（exp_avg=0, exp_avg_sq=0）
-
-    Args:
-        optimizer: 当前 optimizer
-        model: 当前模型（支持 DDP / compiled）
-        load_file: 模型 checkpoint 路径（e.g., model_0005.pth）
-        device: 设备
-    """
-    print("🔍 开始部分加载 optimizer 状态（支持专家扩展）...")
-
-    # --- Step 1: 加载原始模型 state_dict 以获取参数名 ---
-    # 我们需要知道 checkpoint 中有哪些参数
-    ckpt_model_state = torch.load(load_file, map_location=device)
-
-    # 提取 checkpoint 中的专家索引
-    ckpt_expert_indices = set()
-    # print(f'ckpt_model_state.keys(): {ckpt_model_state.keys()}')
-    for name in ckpt_model_state.keys():
-        # # 匹配如: experts.0.net.0.weight, decoder.experts.1.net.bias 等
-        # match = re.match(r'(?:decoder\.)?experts\.(\d+)\.', name)
-        # 匹配如: experts.0.net.0.weight, decoder.experts.1.net.bias 等
-        match = re.match(r'.*\.?experts\.(\d+)\.', name)
-        if match:
-            parts = name.split('.')
-            for i, part in enumerate(parts):
-                if part == 'experts' and i + 1 < len(parts):
-                  idx = int(parts[i + 1])
-            # idx = int(match.group(1))
-                  ckpt_expert_indices.add(idx)
-    
-    if not ckpt_expert_indices:
-        print("🟡 未在 checkpoint 中找到 experts 参数，跳过 optimizer 加载")
-        return
-
-    max_ckpt_anchor_idx = max(ckpt_expert_indices)
-    print(f"📊 Checkpoint 中专家数量: {max_ckpt_anchor_idx + 1} (indices 0..{max_ckpt_anchor_idx})")
-
-    # --- Step 2: 获取当前模型的专家数量 ---
-    unwrapped_model = getattr(model, 'module', model)
-    current_num_anchors = getattr(unwrapped_model.query_traj_decoder, 'num_anchors', None)
-    if current_num_anchors is None:
-        print("❌ 无法获取当前模型的 num_anchors")
-        return
-
-    print(f"📊 当前模型专家数量: {current_num_anchors}")
-
-    if current_num_anchors < max_ckpt_anchor_idx + 1:
-        print("❌ 当前模型专家数量少于 checkpoint，不支持缩减，跳过 optimizer 加载")
-        return
-
-    # --- Step 3: 加载 optimizer 状态 ---
-    optim_path = load_file.replace('model_', 'optimizer_')
-    if not os.path.isfile(optim_path):
-        print(f"❌ 找不到 optimizer 文件: {optim_path}")
-        return
-
-    saved_optim_state = torch.load(optim_path, map_location=device)
-    if 'state' not in saved_optim_state or 'param_groups' not in saved_optim_state:
-        print("❌ optimizer 状态格式错误")
-        return
-
-    # --- Step 4: 构建当前模型参数名到 param_id 的映射 ---
-    # 我们要找到当前模型中，哪些参数属于旧专家（index <= max_ckpt_anchor_idx）
-    current_params = {}
-    for name, param in unwrapped_model.named_parameters():
-        if param.requires_grad:
-            # 提取专家索引
-            match = re.match(r'.*\.?experts\.(\d+)\.', name)
-            if match:
-                expert_idx = int(match.group(1))
-                if expert_idx <= max_ckpt_anchor_idx:
-                    # 属于旧专家，我们尝试恢复其 optimizer 状态
-                    current_params[name] = param
-            else:
-                # 非专家参数（如 encoder、decoder.head 等），也尝试恢复
-                current_params[name] = param
-
-    # 构建 name -> param_id 映射
-    name_to_param_id = {}
-    for param_id, param_state in optimizer.state.items():
-        for name, param in current_params.items():
-            # 比较 storage pointer 以判断是否是同一个参数
-            try:
-                if param.storage().data_ptr() == next(iter(param_state.values())).storage().data_ptr():
-                    name_to_param_id[name] = param_id
-                    break
-            except:
-                continue
-
-    if len(name_to_param_id) == 0:
-        print("🟡 未找到可匹配的参数，跳过 optimizer 加载")
-        return
-
-    print(f"✅ 找到 {len(name_to_param_id)} 个旧参数可恢复 optimizer 状态")
-
-    # --- Step 5: 构建新的 optimizer state ---
-    new_state = {}
-    new_param_groups = []
-
-    for group in saved_optim_state['param_groups']:
-        new_group = {k: v for k, v in group.items() if k != 'params'}
-        new_group_params = []
-
-        for param_id in group['params']:
-            if param_id in saved_optim_state['state']:
-                # 查找这个 param_id 在 checkpoint 中对应的参数名
-                # 我们无法直接获取，但我们可以假设：optimizer.state 中的 param_id 顺序与模型参数顺序一致
-                # 更安全：跳过，改用名字匹配
-                pass
-
-        # 改为：我们只关心名字匹配的参数
-        # 但我们没有 saved state 的 param_id -> name 映射
-        # 所以我们依赖：optimizer.state 的 param_id 是稳定的，且名字匹配即可
-        pass
-
-    # === 最终策略：我们信任 param_id 的稳定性，并仅恢复存在的 param_id ===
-    for param_id, saved_state in saved_optim_state['state'].items():
-        if param_id in optimizer.state:
-            # 当前 optimizer 中存在该参数（可能是旧专家或共享层）
-            new_state[param_id] = saved_state
-        # else: 新增参数，跳过，由 optimizer 自动初始化
-
-    # 重建 param_groups
-    for group in saved_optim_state['param_groups']:
-        new_group = {k: v for k, v in group.items() if k != 'params'}
-        new_group_params = [pid for pid in group['params'] if pid in new_state]
-        new_group['params'] = new_group_params
-        new_param_groups.append(new_group)
-
-    # --- Step 6: 加载 ---
-    merged_state = {
-        'state': new_state,
-        'param_groups': new_param_groups
-    }
-
-    try:
-        optimizer.load_state_dict(merged_state)
-        print(f"✅ 成功加载 optimizer 状态（旧专家恢复，新专家自动初始化）")
-    except Exception as e:
-        print(f"❌ 加载 optimizer 状态失败: {e}")
 
 @record  # Records error and tracebacks in case of failure
 def main():
@@ -866,7 +530,7 @@ def main():
       config.detailed_loss_weights[k] = config.detailed_loss_weights[k] * factor
 
   # Data, configures config. Create before the model
-  train_set = Ability_CARLA_Data(root=config.dataset_root,
+  train_set = Ability_CARLA_Data(root=config.mini_dataset_root,
                          config=config,
                          estimate_class_distributions=config.estimate_class_distributions,
                          estimate_sem_distribution=config.estimate_semantic_distribution,
@@ -919,46 +583,26 @@ def main():
     if args.continue_epoch:
       start_epoch = int(''.join(filter(str.isdigit, load_name))) + 1
     
-    # # 使用修复后的加载方式
-    # try:
-    #     # 先尝试正常加载
-    #     # model.load_state_dict(torch.load(args.load_file, map_location=device), strict=False)
-    #     model = load_checkpoint_ignore_anchors(model, args.load_file, device)
-    #     print("anchor加载成功, no number changed on anchors.")
-    # except RuntimeError as e:
-    #     if "size mismatch" in str(e) and "anchors" in str(e):
-    #         print("检测到锚点不匹配，自动修复...")
-    #         model = load_checkpoint_with_anchor_fix(model, args.load_file, device)
-    #         print("锚点修复完成")
-    #     else:
-    #         # 如果是其他错误，重新抛出
-    #         raise e
-    # 使用新加载函数
-    try:
-        model = load_hybrid_model_checkpoint(model, args.load_file, device)
-        print("✅ 模型加载成功")
-    except Exception as e:
-        print(f"❌ 加载失败: {e}")
-        raise
+    # 先尝试正常加载
+    # model.load_state_dict(torch.load(args.load_file, map_location=device), strict=False)
+    model = load_checkpoint_ignore_anchors(model, args.load_file, device)
+    print("anchor加载成功")
 
-  if config.freeze_backbone:  # seems that once freeze the backbone, all the aux heads are frozen.
-    print('***** freeze backbone *****')
+
+  if config.freeze_backbone:
+    print('*** freezing backbone ***')
     model.backbone.requires_grad_(False)
 
     if config.detect_boxes:
-      print('***** freeze detect_boxes *****')
       model.head.requires_grad_(False)
 
     if config.use_semantic:
-      print('***** freeze semantic *****')
       model.semantic_decoder.requires_grad_(False)
 
     if config.use_bev_semantic:
-      print('***** freeze bev_semantic *****')
       model.bev_semantic_decoder.requires_grad_(False)
 
     if config.use_depth:
-      print('***** freeze depth *****')
       model.depth_decoder.requires_grad_(False)
 
   # Synchronizing the Batch Norms increases the Batch size with which they are compute by *num_gpus
@@ -974,7 +618,7 @@ def main():
                                                     find_unused_parameters=find_unused_parameters)
                                                     # find_unused_parameters=True)
 
-  if config.use_optim_groups:  # 0
+  if config.use_optim_groups:
     params = model.module.create_optimizer_groups(config.weight_decay)
   else:
     params = model.parameters()
@@ -989,11 +633,7 @@ def main():
   else:
     optimizer = optim.AdamW(params, lr=args.lr, amsgrad=True)
 
-  # load_partial_optimizer_state(optimizer, model, args.load_file, device)  # old net opt load old para, new net opt init new opt
-
-  # print('Check if use load_partial_optimizer_state...')
-  # print(not args.load_file is None , not config.freeze_backbone , args.continue_epoch)
-  if not args.load_file is None and not config.freeze_backbone and args.continue_epoch:  # 1 and 1 and 1
+  if not args.load_file is None and not config.freeze_backbone and args.continue_epoch:
     optimizer.load_state_dict(torch.load(args.load_file.replace('model_', 'optimizer_'), map_location=device))
 
   model_parameters = filter(lambda p: p.requires_grad, model.parameters())
@@ -1191,7 +831,7 @@ class Engine(object):
 
     ego_vel = data['speed'].to(self.device, dtype=torch.float32).unsqueeze(1)
 
-    if self.config.use_twohot_target_speeds:  # 1
+    if self.config.use_twohot_target_speeds:
       target_speed = data['target_speed_twohot'].to(self.device, dtype=torch.float32)
     else:
       target_speed = data['target_speed'].to(self.device, dtype=torch.long)
@@ -1234,8 +874,7 @@ class Engine(object):
 
       pred_wp,\
       pred_target_speed,\
-      pred_trajectories, \
-      pred_traj_probs, \
+      pred_checkpoint, \
       pred_semantic, \
       pred_bev_semantic, \
       pred_depth, \
@@ -1265,8 +904,7 @@ class Engine(object):
     else:
       losses = compute_loss(pred_wp=pred_wp,
                             pred_target_speed=pred_target_speed,
-                            pred_trajectories = pred_trajectories, 
-                            pred_traj_probs = pred_traj_probs,
+                            pred_checkpoint=pred_checkpoint,
                             pred_semantic=pred_semantic,
                             pred_bev_semantic=pred_bev_semantic,
                             pred_depth=pred_depth,
@@ -1332,9 +970,7 @@ class Engine(object):
                         pred_semantic=pred_semantic,
                         pred_bev_semantic=pred_bev_semantic,
                         pred_depth=pred_depth,
-                        # pred_checkpoint=pred_checkpoint,
-                        pred_trajectories = pred_trajectories, 
-                        pred_traj_probs = pred_traj_probs,
+                        pred_checkpoint=pred_checkpoint,
                         pred_speed=F.softmax(pred_target_speed, dim=1) if pred_target_speed is not None else None,
                         pred_bb=pred_bounding_box,
                         gt_wp=ego_waypoint,

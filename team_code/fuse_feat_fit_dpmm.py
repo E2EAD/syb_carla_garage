@@ -10,7 +10,7 @@ import json
 from tqdm import tqdm
 
 # Import your existing modules
-from my_model import LidarCenterNet
+from my_model_wTFFde import LidarCenterNet
 from config import GlobalConfig
 from ability_data import Ability_CARLA_Data
 from torch.utils.data import DataLoader
@@ -162,7 +162,7 @@ class FeatureExtractor:
             lidar = data['lidar'].to(self.device, dtype=torch.float32)
 
         with torch.no_grad():
-            pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, \
+            pred_wp, pred_target_speed, pred_checkpoint, \
             pred_semantic, pred_bev_semantic, pred_depth, pred_bounding_box, \
             attention_weights, pred_wp_1, selected_path = self.model(
                 rgb=rgb,
@@ -292,8 +292,8 @@ class DpmmFeatureTrainer:
                 # if iteration > 0 or epoch > 0:
                 # Sample from DPMM and combine with new data
                 K = len(self.dpmm.components)
-                new_data_ratio = 1 / (1 + K)
-                num_to_sample = int((1 - new_data_ratio) * len(current_features) / new_data_ratio)
+                new_data_ratio = 1 if K==0 else 0.5
+                num_to_sample = int(min((1 - new_data_ratio) * len(current_features) / new_data_ratio, 100000))
                 
                 print(f"Sampling {num_to_sample} from DPMM, adding {len(current_features)} new features")
                 
@@ -428,20 +428,19 @@ def main():
     
     # DPMM configuration
     dpmm_config = {
-        "gamma0": 5,
+        "gamma0": 500,
         "num_lap": 1000,
-        "sF": 1e-5,
-        "dpmm_update_per_epoch": 10
+        "sF": 1e-5
     }
     
     # Paths - adjust these according to your setup
-    # dataset_root = "/home/syb/b2d_mini_v2"  # /media/syb/syb_disk_2/b2d_base_v3/carla_dataset
-    dataset_root = '/media/syb/syb_disk_2/b2d_base_v3/carla_dataset'
+    dataset_root = "/home/syb/b2d_mini_v2"  # /media/syb/syb_disk_2/b2d_base_v3/carla_dataset
+    # dataset_root = '/media/syb/syb_disk_2/b2d_base_v3/carla_dataset'
 
-    model_folder = "./log/syb_train_noMoe_0-eb"  # need choose
-    dpmm_load_path = None  #'./dpmm_feature/noMoe_demo/Emergency_Brake/dpmm_model'  # need choose'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    model_folder = "./log/syb_noMoe_wTFFde_1-ts"  # need choose
+    dpmm_load_path = './dpmm_feature/noMoe_wTFFde/Emergency_Brake/dpmm_model' # need choose 'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
-    model_path = os.path.join(model_folder, "model_0030.pth")
+    model_path = os.path.join(model_folder, "model_0005.pth")
     config_path = os.path.join(model_folder, "config.json")
         # Load the config saved during training
     with open(config_path, 'rt', encoding='utf-8') as f:
@@ -455,12 +454,12 @@ def main():
     config.__dict__.update(loaded_config.__dict__)
     
     # Select ability for dataset
-    ability = config.selected_ability  # Adjust based on your needs
+    ability = 'Traffic_Sign'  # need choose. Adjust based on your dataset 'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
-    dataset_name = ability  # Adjust based on your dataset
+    dataset_name = ability  
 
 
-    output_dir = os.path.join("/home/syb/carla_garage/dpmm_feature/noMoe_demo", ability)
+    output_dir = os.path.join("/home/syb/carla_garage/dpmm_feature/noMoe_wTFFde", ability)  # need choose
     # dpmm_save_dir = os.path.join(output_dir, "dpmm_model")
     # os.makedirs(dpmm_save_dir)
     output_dir = str(output_dir)
@@ -490,7 +489,7 @@ def main():
         dataset=dataset,
         batch_size=8,  # Adjust based on your GPU memory
         shuffle=True,
-        num_workers=4,
+        num_workers=6,
         pin_memory=True
     )
     
@@ -527,7 +526,7 @@ def main():
         features=features,
         dataset_name=dataset_name,
         epochs=1,  # Adjust based on your needs
-        iterations_per_epoch=2  # Adjust based on your needs
+        iterations_per_epoch=1  # Adjust based on your needs
     )
     
     # Save final DPMM model

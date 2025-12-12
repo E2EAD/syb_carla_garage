@@ -13,7 +13,7 @@ class PlanningTrajectoryDecoder(nn.Module):
     - encoder_out: (batch_size, seq_len, dim) - BEV feature embeddings from encoder
     
     Output Shapes (predict method):
-    - selected_trajectories: (batch_size, 20) - [x1,y1,x2,y2,...,x6,y6] coordinates
+    - selected_trajectories: (batch_size, 20) - [x1,y1,x2,y2,...,x10,y10] coordinates
     - all_trajectories: (num_anchors, batch_size, 20) - All predicted trajectories
     - scores: (num_anchors, batch_size) - Confidence scores for each trajectory
     

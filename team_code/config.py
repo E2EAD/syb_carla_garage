@@ -860,7 +860,7 @@ class GlobalConfig:
     # Traj anchors
     # -----------------------------------------------------------------------------
     self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
-    self.selected_ability = 'Traffic_Sign'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.selected_ability = 'Traffic_Sign' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
     # self.score_loss_weight = 1
@@ -875,7 +875,7 @@ class GlobalConfig:
     self.tf_de_dropout = 0.05
     # self.tf_de_tgt_dim = 15
 
-    self.temperature = 0.5
+    self.temperature = 1
 
     # -----------------------------------------------------------------------------
     # Dataset root
@@ -921,6 +921,14 @@ class GlobalConfig:
     self.sf_num_heads = 8  # 注意力头数
     self.sf_dropout = 0.1  # dropout率
 
+    # -----------------------------------------------------------------------------
+    # Fuse feat front door encoder and anchor
+    # -----------------------------------------------------------------------------
+    self.use_prior_fuseFeat = True
+    self.prior_fuseFeat_path = "./dpmm_feature/noMoe_wTFFde/Emergency_Brake/tracked_clusters/Emergency_Brake-epoch00-iter000-20251212_164904-tracked_clusters.pkl"
+    self.ff_de_dim = 256  # 速度编码器维度
+    self.ff_num_heads = 8  # 注意力头数
+    self.ff_dropout = 0.1  # dropout率
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():
