@@ -71,26 +71,57 @@ class FuseFeatFrontDoorEncoder(nn.Module):
         self.ori_gate = nn.Linear(self.hidden_size, 1) 
         self.sigmoid = nn.Sigmoid()
 
-    def _create_anchors(self, anchor_path=None):
+    def _create_anchors(self, anchor_path_list=None):
         """
         从文件读取fuse featanchor
         Args:
-            anchor_path: 存储fuse featanchor聚类结果的JSON文件路径
+            anchor_path_list: 存储fuse featanchor聚类结果的JSON文件路径列表
         """
-        if anchor_path is None:
+        if anchor_path_list is None:
             print('No fuseFeat anchor path provided, using random initialization.')
             return None 
-        else:
+        
+        # Handle both single path string and list of paths
+        if isinstance(anchor_path_list, str):
+            anchor_path_list = [anchor_path_list]
+        
+        all_clusters = []
+        
+        for anchor_path in anchor_path_list:
             with open(anchor_path, 'rb') as f:
                 data = pickle.load(f)
-            feat = [
-                torch.tensor(c['mu'], dtype=torch.float32) 
-                for c in sorted(data['tracked_clusters'], key=lambda x: x['cluster_id'])
-                ]
-            self.num_anchor = len(feat)
-            feat = torch.stack(feat)
-            self.register_buffer('anchors', feat)
-            print(f'Got fuse feat anchors from {anchor_path}, shape: {feat.shape}')
+            
+            # Extract clusters from this file
+            clusters = data.get('tracked_clusters', [])
+            
+            # If there are existing anchors, offset the cluster_ids to avoid collisions
+            cluster_offset = max([c['cluster_id'] for c in all_clusters], default=-1) + 1
+            for cluster in clusters:
+                cluster['cluster_id'] = cluster['cluster_id'] + cluster_offset
+            
+            all_clusters.extend(clusters)
+            
+            print(f'Loaded {len(clusters)} anchors from {anchor_path}')
+        
+        if not all_clusters:
+            print('No valid anchor data found in any file.')
+            return None
+        
+        # Sort all collected clusters by cluster_id
+        all_clusters.sort(key=lambda x: x['cluster_id'])
+        
+        # Create feature tensors
+        feat = [
+            torch.tensor(c['mu'], dtype=torch.float32) 
+            for c in all_clusters
+        ]
+
+        feat = torch.stack(feat)
+        self.register_buffer('anchors', feat)
+        
+        print(f'Got {len(feat)} fuse feat anchors from {len(anchor_path_list)} file(s), shape: {feat.shape}')
+        
+        return feat
 
     def forward(self, fuseFeat_feats, fuseFeat_mask=None):
         """

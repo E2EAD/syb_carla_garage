@@ -41,6 +41,9 @@ from collections import defaultdict
 import pandas as pd
 from scipy.spatial.distance import cdist
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, f1_score
+import time
+import psutil
+import GPUtil
 
 
 # import sys
@@ -50,7 +53,7 @@ from sklearn.metrics import confusion_matrix, classification_report, accuracy_sc
 # parent_dir = os.path.dirname(current_dir)
 # sys.path.insert(0, parent_dir)
 # Import your model and data classes
-from model import LidarCenterNet
+from my_model_wTFde import LidarCenterNet
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
 import transfuser_utils as t_u
@@ -252,6 +255,11 @@ class OpenLoopEvaluator:
         # Add to metrics storage
         self.metrics['bev_semantic'] = defaultdict(list)
 
+        # 性能监控相关
+        self.inference_times = []  # 存储每个batch的推理时间
+        self.memory_usages = []    # 存储每个batch的显存使用
+        self.cpu_usages = []       # 存储CPU使用率
+
     def set_random_seed(self, seed):
         """设置所有相关的随机种子"""
         random.seed(seed)
@@ -380,6 +388,15 @@ class OpenLoopEvaluator:
         bev_gt = None
         if 'bev_semantic' in data:
             bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
+
+        # 记录处理前的显存使用
+        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        start_time = time.time()
+        
+        # 记录处理前的显存
+        if torch.cuda.is_available():
+            start_memory = torch.cuda.memory_allocated(self.device) / 1024**2  # MB
+            start_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2  # MB
         
         # Model forward pass
         pred_wp, pred_target_speed, pred_checkpoint, _, pred_bev_semantic, _, _, _, _, _ = self.model(
@@ -389,6 +406,44 @@ class OpenLoopEvaluator:
             ego_vel=ego_vel,
             command=command
         )
+
+        # 同步并记录时间
+        torch.cuda.synchronize() if torch.cuda.is_available() else None
+        inference_time = time.time() - start_time
+        
+        # 记录推理后的显存使用
+        if torch.cuda.is_available():
+            end_memory = torch.cuda.memory_allocated(self.device) / 1024**2  # MB
+            end_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2  # MB
+            peak_memory = torch.cuda.max_memory_allocated(self.device) / 1024**2  # MB
+            peak_memory_reserved = torch.cuda.max_memory_reserved(self.device) / 1024**2  # MB
+            
+            # 记录显存使用信息
+            memory_info = {
+                'allocated_before': start_memory,
+                'allocated_after': end_memory,
+                'allocated_peak': peak_memory,
+                'reserved_before': start_memory_reserved,
+                'reserved_after': end_memory_reserved,
+                'reserved_peak': peak_memory_reserved,
+                'inference_time': inference_time,
+                'batch_size': data['rgb'].shape[0],
+                'batch_idx': batch_idx
+            }
+        else:
+            memory_info = {
+                'inference_time': inference_time,
+                'batch_size': data['rgb'].shape[0],
+                'batch_idx': batch_idx
+            }
+        
+        # 记录CPU使用率
+        cpu_percent = psutil.cpu_percent(interval=None)
+        
+        # 存储性能数据
+        self.inference_times.append(inference_time)
+        self.memory_usages.append(memory_info)
+        self.cpu_usages.append(cpu_percent)
         
         # Convert predictions
         # print(f'pred_target_speed shape: {pred_target_speed.shape}')
@@ -702,6 +757,39 @@ class OpenLoopEvaluator:
             for i, iou in enumerate(bev_results['IoU_per_class']):
                 if not np.isnan(iou) and iou>0:
                     print(f"  Class {i}: {iou:.4f}")
+
+        # 添加性能指标
+        print("\n--- Performance Metrics ---")
+        performance_stats = self.analyze_computing_performance()
+        
+        if performance_stats:
+            self.metrics['summary']['performance'] = performance_stats
+            
+            # 打印性能指标
+            if 'inference_time' in performance_stats:
+                stats = performance_stats['inference_time']
+                print(f"Inference Time per batch:")
+                print(f"  Mean: {stats['mean']:.4f}s")
+                print(f"  Std: {stats['std']:.4f}s")
+                print(f"  Min: {stats['min']:.4f}s")
+                print(f"  Max: {stats['max']:.4f}s")
+                print(f"  Total: {stats['total']:.2f}s")
+                print(f"  FPS (mean): {stats['fps_mean']:.2f}")
+                print(f"  FPS (median): {stats['fps_median']:.2f}")
+            
+            if 'cpu_usage' in performance_stats:
+                stats = performance_stats['cpu_usage']
+                print(f"CPU Usage:")
+                print(f"  Mean: {stats['mean']:.1f}%")
+                print(f"  Max: {stats['max']:.1f}%")
+            
+            if 'gpu_memory' in performance_stats:
+                stats = performance_stats['gpu_memory']
+                print(f"GPU Memory:")
+                print(f"  Allocated Peak (mean): {stats['allocated_peak_mean']:.1f} MB")
+                print(f"  Allocated Peak (max): {stats['allocated_peak_max']:.1f} MB")
+                print(f"  Reserved Peak (mean): {stats['reserved_peak_mean']:.1f} MB")
+                print(f"  Reserved Peak (max): {stats['reserved_peak_max']:.1f} MB")
     
     def save_results(self):
         """Save evaluation results to files"""
@@ -762,6 +850,66 @@ class OpenLoopEvaluator:
             json.dump(serializable_metrics, f, indent=2)
         
         print(f"\nMetrics saved to: {metrics_file}")
+
+    def analyze_computing_performance(self):
+        """分析并汇总性能指标"""
+        if not self.inference_times:
+            return {}
+        
+        performance_stats = {}
+        
+        # 推理时间统计
+        inference_times = np.array(self.inference_times)
+        performance_stats['inference_time'] = {
+            'mean': float(np.mean(inference_times)),
+            'std': float(np.std(inference_times)),
+            'min': float(np.min(inference_times)),
+            'max': float(np.max(inference_times)),
+            'median': float(np.median(inference_times)),
+            'total': float(np.sum(inference_times)),
+            'fps_mean': float(1.0 / np.mean(inference_times) * self.config.batch_size),
+            'fps_median': float(1.0 / np.median(inference_times) * self.config.batch_size),
+        }
+        
+        # CPU使用率统计
+        if self.cpu_usages:
+            cpu_usages = np.array(self.cpu_usages)
+            performance_stats['cpu_usage'] = {
+                'mean': float(np.mean(cpu_usages)),
+                'std': float(np.std(cpu_usages)),
+                'min': float(np.min(cpu_usages)),
+                'max': float(np.max(cpu_usages)),
+                'median': float(np.median(cpu_usages)),
+            }
+        
+        # GPU显存统计
+        if self.memory_usages and torch.cuda.is_available():
+            allocated_peaks = [m['allocated_peak'] for m in self.memory_usages]
+            reserved_peaks = [m['reserved_peak'] for m in self.memory_usages]
+            
+            performance_stats['gpu_memory'] = {
+                'allocated_peak_mean': float(np.mean(allocated_peaks)),
+                'allocated_peak_max': float(np.max(allocated_peaks)),
+                'reserved_peak_mean': float(np.mean(reserved_peaks)),
+                'reserved_peak_max': float(np.max(reserved_peaks)),
+            }
+            
+            # 获取GPU信息
+            try:
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    gpu = gpus[0]  # 假设使用第一个GPU
+                    performance_stats['gpu_info'] = {
+                        'name': gpu.name,
+                        'driver': torch.version.cuda if torch.cuda.is_available() else 'N/A',
+                        'total_memory': gpu.memoryTotal,
+                        'utilization_mean': gpu.load * 100,
+                        'temperature_mean': gpu.temperature,
+                    }
+            except Exception as e:
+                print(f"Warning: Could not get GPU info: {e}")
+        
+        return performance_stats
     
     def visualize_results(self):
         """Generate visualization plots"""

@@ -30,7 +30,7 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_wTFdeQtd import LidarCenterNet
+from my_model_wTFdeQtdv3 import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -613,6 +613,7 @@ def main():
 
 
   if config.freeze_backbone:
+    print('***** freezing backbone *****')
     model.backbone.requires_grad_(False)
 
     if config.detect_boxes:
@@ -895,7 +896,7 @@ class Engine(object):
         lidar = data['lidar'].to(self.device, dtype=torch.float32)
 
       pred_wp,\
-      pred_target_speed,\
+      pred_speeds, pred_speed_probs,\
       pred_trajectories, \
       pred_traj_probs, \
       pred_semantic, \
@@ -926,7 +927,7 @@ class Engine(object):
                             future_bounding_box_label=future_bounding_box_label)
     else:
       losses = compute_loss(pred_wp=pred_wp,
-                            pred_target_speed=pred_target_speed,
+                            pred_speeds = pred_speeds, pred_speed_probs = pred_speed_probs,
                             pred_trajectories = pred_trajectories, 
                             pred_traj_probs = pred_traj_probs,
                             pred_semantic=pred_semantic,

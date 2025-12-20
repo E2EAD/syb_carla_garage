@@ -21,7 +21,7 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
-from my_query_traj_decoder_v2 import PlanningTrajectoryDecoder
+from my_query_traj_decoder_v15 import PlanningTrajectoryDecoder
 from traj_front_door_encoder import TrajFrontDoorEncoder
 
 

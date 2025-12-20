@@ -1,5 +1,5 @@
 """
-The main model structure
+The main model structure, use Traj FDE to enhan check point feature, use anchor-based QTD for traj/speed prediction
 """
 import transfuser_utils as t_u
 from focal_loss import FocalLoss
@@ -21,8 +21,9 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
-from my_moe_decoder_v25 import PlanningTrajectoryDecoder
-import json
+from my_query_traj_decoder_v15 import PlanningTrajectoryDecoder
+from my_query_spd_decoder import PlanningSpeedDecoder
+from traj_front_door_encoder import TrajFrontDoorEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -47,11 +48,6 @@ class LidarCenterNet(nn.Module):
     else:
       raise ValueError('The chosen vision backbone does not exist. '
                        'The options are: transFuser, aim, bev_encoder')
-    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
-    #     # Freeze the backbone
-    #     print('*****Freeze the backbone*****')
-    #     for param in self.backbone.parameters():
-    #         param.requires_grad = False
 
     if self.config.use_tp:
       target_point_size = 4 if self.config.two_tp_input else 2  # 2
@@ -68,11 +64,6 @@ class LidarCenterNet(nn.Module):
     # prediction heads
     if self.config.detect_boxes:
       self.head = LidarCenterNetHead(self.config)
-    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
-    #   # Freeze the detection head
-    #   print('*****Freeze the detection head*****')
-    #   for param in self.head.parameters():
-    #       param.requires_grad = False
 
     if self.config.use_semantic:
       self.semantic_decoder = t_u.PerspectiveDecoder(
@@ -83,10 +74,6 @@ class LidarCenterNet(nn.Module):
           inter_channel_2=self.config.deconv_channel_num_2,
           scale_factor_0=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_0,
           scale_factor_1=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_1)
-    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
-    #   # Freeze the BEV semantic decoder
-    #   for param in self.semantic_decoder.parameters():
-    #       param.requires_grad = False
 
     if self.config.use_bev_semantic:
       self.bev_semantic_decoder = nn.Sequential(
@@ -105,11 +92,6 @@ class LidarCenterNet(nn.Module):
           nn.Upsample(size=(self.config.lidar_resolution_height, self.config.lidar_resolution_width),
                       mode='bilinear',
                       align_corners=False))
-    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
-    #   # Freeze the BEV semantic decoder
-    #   print('*****Freeze the BEV semantic decoder*****')
-    #   for param in self.bev_semantic_decoder.parameters():
-    #       param.requires_grad = False
 
       # Computes which pixels are visible in the camera. We mask the others.
       _, valid_voxels = t_u.create_projection_grid(self.config)
@@ -131,24 +113,20 @@ class LidarCenterNet(nn.Module):
           inter_channel_2=self.config.deconv_channel_num_2,
           scale_factor_0=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_0,
           scale_factor_1=self.backbone.perspective_upsample_factor // self.config.deconv_scale_factor_1)
-    # if self.config.if_freeze_tfBackbone_and_auxTaskHead:
-    #   # Freeze the Depth decoder
-    #   for param in self.depth_decoder.parameters():
-    #       param.requires_grad = False
 
     if self.config.use_controller_input_prediction:
       if self.config.transformer_decoder_join:
         ts_input_channel = self.config.gru_input_size
       else:
         ts_input_channel = self.config.gru_hidden_size
-      if self.config.input_path_to_target_speed_network:
-        extra_dimensions = 2 * self.config.predict_checkpoint_len
-        self.target_speed_network = nn.Sequential(
-            nn.Linear(ts_input_channel + extra_dimensions, ts_input_channel + extra_dimensions), nn.ReLU(inplace=True),
-            nn.Linear(ts_input_channel + extra_dimensions, len(config.target_speeds)))
-      else:
-        self.target_speed_network = nn.Sequential(nn.Linear(ts_input_channel, ts_input_channel), nn.ReLU(inplace=True),
-                                                  nn.Linear(ts_input_channel, len(config.target_speeds)))
+    #   if self.config.input_path_to_target_speed_network:
+    #     extra_dimensions = 2 * self.config.predict_checkpoint_len
+    #     self.target_speed_network = nn.Sequential(
+    #         nn.Linear(ts_input_channel + extra_dimensions, ts_input_channel + extra_dimensions), nn.ReLU(inplace=True),
+    #         nn.Linear(ts_input_channel + extra_dimensions, len(config.target_speeds)))
+    #   else:
+    #     self.target_speed_network = nn.Sequential(nn.Linear(ts_input_channel, ts_input_channel), nn.ReLU(inplace=True),
+    #                                               nn.Linear(ts_input_channel, len(config.target_speeds)))
 
     if self.config.use_controller_input_prediction or self.config.use_wp_gru:
       if self.config.transformer_decoder_join:
@@ -206,11 +184,13 @@ class LidarCenterNet(nn.Module):
           # + 1 for the target speed token
           self.checkpoint_query = nn.Parameter(
               torch.zeros(1, self.config.predict_checkpoint_len + 1, self.config.gru_input_size))  # (1,11,256)
-          # self.checkpoint_decoder = GRUWaypointsPredictorInterFuser(input_dim=self.config.gru_input_size,
-          #                                                           hidden_size=self.config.gru_hidden_size,
-          #                                                           waypoints=self.config.predict_checkpoint_len,
-          #                                                           target_point_size=target_point_size)
+        #   self.checkpoint_decoder = GRUWaypointsPredictorInterFuser(input_dim=self.config.gru_input_size,
+        #                                                             hidden_size=self.config.gru_hidden_size,
+        #                                                             waypoints=self.config.predict_checkpoint_len,
+        #                                                             target_point_size=target_point_size)
           self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
+          self.query_spd_decoder = PlanningSpeedDecoder(self.config)
+          self.traj_frontdoor_encoder = TrajFrontDoorEncoder(self.config)
 
         self.reset_parameters()
 
@@ -238,11 +218,13 @@ class LidarCenterNet(nn.Module):
                                                             target_point_size=target_point_size)
 
         if self.config.use_controller_input_prediction:
-          # self.checkpoint_decoder = GRUWaypointsPredictorTransFuser(self.config,
-          #                                                           pred_len=self.config.predict_checkpoint_len,
-          #                                                           hidden_size=self.config.gru_hidden_size,
-          #                                                           target_point_size=target_point_size)
+        #   self.checkpoint_decoder = GRUWaypointsPredictorTransFuser(self.config,
+        #                                                             pred_len=self.config.predict_checkpoint_len,
+        #                                                             hidden_size=self.config.gru_hidden_size,
+        #                                                             target_point_size=target_point_size)
           self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
+          self.query_spd_decoder = PlanningSpeedDecoder(self.config)
+          self.traj_frontdoor_encoder = TrajFrontDoorEncoder(self.config)
 
     if self.config.use_wp_gru or self.config.use_controller_input_prediction:
       if self.extra_sensors:
@@ -319,13 +301,14 @@ class LidarCenterNet(nn.Module):
       target_point = torch.cat((target_point, target_point_next), axis=1)
 
     if self.config.backbone == 'transFuser':  # True
-      bev_feature_grid, fused_features, image_feature_grid = self.backbone(rgb, lidar_bev)  # here we get bev_feature_grid
+      bev_feature_grid, fused_features, image_feature_grid = self.backbone(rgb, lidar_bev)
     else:
       raise ValueError('The chosen vision backbone does not exist. '
                        'The options are: transFuser, aim, bev_encoder')
 
     pred_wp = None
-    pred_target_speed = None
+    pred_speeds = None
+    pred_speed_probs = None
     pred_trajectories = None 
     pred_traj_probs = None
     pred_checkpoint = None
@@ -377,7 +360,7 @@ class LidarCenterNet(nn.Module):
         #       joined_wp_features = self.join(self.wp_query.repeat(bs, 1, 1), fused_features)
         #     pred_wp = self.wp_decoder(joined_wp_features, target_point)
         if self.config.use_controller_input_prediction:  # 0 or 1
-          if self.config.tp_attention:  # 1
+          if self.config.tp_attention or False:  # 0
             tp_token = self.tp_encoder(target_point)
             tp_token = tp_token + self.tp_pos_embed
             # print_data_info(tp_token)  # torch.Size([2, 256])
@@ -402,34 +385,46 @@ class LidarCenterNet(nn.Module):
           gru_features = joined_checkpoint_features[:, :self.config.predict_checkpoint_len]
           # print_data_info(gru_features)  # torch.Size([2, 10, 256])
           target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
-          # print_data_info(target_speed_features)  # torch.Size([2, 256])
+          target_speed_features = target_speed_features.unsqueeze(1) # torch.Size([2, 1, 256])
 
-          # pred_checkpoint = self.checkpoint_decoder(gru_features, target_point) # here we have pred checkpoints
+          aug_gru_features, _ = self.traj_frontdoor_encoder(gru_features)
+        #   pred_checkpoint = self.checkpoint_decoder(aug_gru_features, target_point) # here we have pred checkpoints
           # print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
 
           # my decoder get in
-          pred_trajectories, scores = self.query_traj_decoder(gru_features)  # (num_anchors, batch_size, 20) scores: (num_anchors, batch_size)
-          # print_data_info(pred_trajectories)  # torch.Size([K, 2, 20])
-          # print_data_info(scores)  # torch.Size([K, 2])
-          num_anchors = scores.size(0)
-          batch_size = scores.size(1)
+          pred_trajectories, traj_scores = self.query_traj_decoder(aug_gru_features)  # (num_anchors, batch_size, 20) traj_scores: (num_anchors, batch_size)
+          num_anchors = traj_scores.size(0)
+          batch_size = traj_scores.size(1)
           pred_trajectories = pred_trajectories.reshape(num_anchors, batch_size, 10, 2)  # torch.Size([K, 2, 10, 2]) here we have pred trajectories
 
-          # 首先确保scores是合理的
-          scores = torch.clamp(scores, min=-10.0, max=10.0)  # 限制logits范围
+          # 首先确保traj_scores是合理的
+          traj_scores = torch.clamp(traj_scores, min=-10.0, max=10.0)  # 限制logits范围
           
           # 稳定的softmax计算
-          pred_traj_logits = scores - scores.max(dim=0, keepdim=True)[0]
+          pred_traj_logits = traj_scores - traj_scores.max(dim=0, keepdim=True)[0]
           pred_traj_probs = F.softmax(pred_traj_logits, dim=0)
           pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)  # here we have pred traj probs
 
-          if self.config.input_path_to_target_speed_network:  # 0
-            ts_input = torch.cat(
-                (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
-            pred_target_speed = self.target_speed_network(ts_input)
-          else:
-            pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
-            # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+          pred_speeds, speed_scores = self.query_spd_decoder(target_speed_features)  # (num_anchors, batch_size, 8) traj_scores: (num_anchors, batch_size)
+        #   print_data_info(pred_speeds)  # torch.Size([28, 2, 8])
+        #   print_data_info(speed_scores)  # torch.Size([28, 2])
+
+          speed_scores = torch.clamp(speed_scores, min=-10.0, max=10.0)  # 限制logits范围
+          
+          # 稳定的softmax计算
+          pred_speed_logits = speed_scores - speed_scores.max(dim=0, keepdim=True)[0]
+          pred_speed_probs = F.softmax(pred_speed_logits, dim=0)
+          pred_speed_probs = torch.clamp(pred_speed_probs, min=1e-8, max=1.0)  # here we have pred traj probs
+        #   print_data_info(pred_speed_probs)
+
+        #   if self.config.input_path_to_target_speed_network:  # 0
+        #     ts_input = torch.cat(
+        #         (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
+        #     pred_target_speed = self.target_speed_network(ts_input)
+        #   else:
+        #     pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
+        #     # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+
 
       else:
         joined_features = self.join(fused_features)
@@ -441,12 +436,12 @@ class LidarCenterNet(nn.Module):
         if self.config.use_controller_input_prediction:  # 0 or 1
           pred_checkpoint = self.checkpoint_decoder(gru_features, target_point)  
           
-          if self.config.input_path_to_target_speed_network:  # 0
-            ts_input = torch.cat(
-                (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
-            pred_target_speed = self.target_speed_network(ts_input)
-          else:
-            pred_target_speed = self.target_speed_network(target_speed_features) 
+        #   if self.config.input_path_to_target_speed_network:  # 0
+        #     ts_input = torch.cat(
+        #         (target_speed_features, pred_checkpoint.reshape(bs, self.config.predict_checkpoint_len * 2)), axis=1)
+        #     pred_target_speed = self.target_speed_network(ts_input)
+        #   else:
+        #     pred_target_speed = self.target_speed_network(target_speed_features) 
             
 
     # Auxiliary tasks
@@ -469,23 +464,10 @@ class LidarCenterNet(nn.Module):
     if self.config.detect_boxes:
       pred_bounding_box = self.head(bev_feature_grid)
 
-    return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth, \
+    return pred_wp, pred_speeds, pred_speed_probs, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth, \
       pred_bounding_box, attention_weights, pred_wp_1, selected_path
-  
-  def load_anchor_mu_and_var(self, anchor_path):
-    with open(anchor_path, 'r') as f:
-        data = json.load(f)
 
-    # Extract first 20 elements (x,y for 10 waypoints) from each cluster's 'mu'
-    mu_list = [entry['mu'][:20] for entry in data]
-    anchors_mu = torch.tensor(mu_list, dtype=torch.float32)
-    var_list = [entry['var'][:20] for entry in data]
-    anchor_var = torch.tensor(var_list, dtype=torch.float32)
-    # print(f'read anchors mu and var from {anchor_path}')
-    return anchors_mu, anchor_var
-
-
-  def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth,
+  def compute_loss(self, pred_wp, pred_speeds, pred_speed_probs, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth,
                    pred_bounding_box, pred_wp_1, selected_path, waypoint_label, target_speed_label, checkpoint_label,
                    semantic_label, bev_semantic_label, depth_label, center_heatmap_label, wh_label, yaw_class_label,
                    yaw_res_label, offset_label, velocity_label, brake_target_label, pixel_weight_label,
@@ -506,16 +488,52 @@ class LidarCenterNet(nn.Module):
     #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label))
     #     loss.update({'loss_wp': loss_wp})
 
-    anchor_mu, anchor_var = self.load_anchor_mu_and_var(self.config.prior_traj_path)
-
     if self.config.use_controller_input_prediction:
-      loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
+      speed_values = torch.tensor([0., 4., 8., 10., 13.89, 16., 17.78, 20.], 
+                                  device=pred_speeds.device)
+      num_anchors = pred_speed_probs.size(0)
+      batch_size = pred_speed_probs.size(1)
+
+      # 计算距离（添加数值稳定性）
+      with torch.no_grad():
+          # print_data_info(target_speed_label)  # torch.Size([2, 8)
+        #   print_data_info(pred_speeds)
+          distances = torch.abs(torch.sum(pred_speeds * speed_values, dim=-1) 
+                                - torch.sum(target_speed_label * speed_values, dim=-1).unsqueeze(0)) # (num_anchors, batch_size)
+          
+          # 添加距离裁剪，避免极端值
+        #   print_data_info(distances)  # torch.Size([28, 2])
+          distances = torch.clamp(distances, min=1e-6, max=100.0)
+
+      # 3. 创建软标签（修复数值稳定性）
+      with torch.no_grad():
+          # 使用稳定的softmax计算
+          neg_distances = -distances / self.config.temperature
+          # 减去最大值提高数值稳定性
+          neg_distances = neg_distances - neg_distances.max(dim=0, keepdim=True)[0]
+          soft_labels = F.softmax(neg_distances, dim=0)
+          
+          # 确保概率分布有效
+          soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+      
+      kl_loss = F.kl_div(
+            torch.log(pred_speed_probs + 1e-8),  # 输入应该是log(prediction)
+            soft_labels,                    # target应该是概率分布
+            reduction='batchmean',
+            log_target=False  # 明确指定target不是log形式
+            )
+      loss.update({'loss_speed_kl_div': kl_loss})
+
+      # BEST SPEED LOSS 
+      min_distances, best_indices = torch.min(distances, dim=0)
+      best_pred_target_speed = pred_speeds[best_indices, torch.arange(batch_size)]
+      loss_target_speed = self.loss_speed(best_pred_target_speed, target_speed_label)
       loss.update({'loss_target_speed': loss_target_speed})
+    #   loss_wp = torch.mean(torch.abs(pred_checkpoint - checkpoint_label))
+    #   loss.update({'loss_checkpoint': loss_wp})
 
       # loss_wp = torch.mean(torch.abs(pred_checkpoint - checkpoint_label))
       # loss.update({'loss_checkpoint': loss_wp})
-
-      # use distance to calcu soft label 
       num_anchors = pred_traj_probs.size(0)
       batch_size = pred_traj_probs.size(1)
       # 计算距离（添加数值稳定性）
@@ -540,50 +558,6 @@ class LidarCenterNet(nn.Module):
           
           # 确保概率分布有效
           soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
-
-      # # use log-likelihood to calcu soft label
-      # num_anchors = pred_traj_probs.size(0)  # N
-      # batch_size = checkpoint_label.size(0)  # B
-      # device = checkpoint_label.device
-
-      # anchor_mu = anchor_mu.to(device)
-      # anchor_var = anchor_var.to(device)
-
-      # # 1. Reshape anchor_mu and anchor_var from (N, 20) -> (N, 10, 2)
-      # anchor_mu_reshaped = anchor_mu.view(num_anchors, 10, 2)  # (N, T=10, 2)
-      # anchor_var_reshaped = anchor_var.view(num_anchors, 10, 2)  # (N, T=10, 2)
-
-      # # 2. 扩展维度以支持广播计算
-      # mu = anchor_mu_reshaped.unsqueeze(1)  # (N, 1, 10, 2)，1 表示 batch 维度
-      # var = anchor_var_reshaped.unsqueeze(1)  # (N, 1, 10, 2)
-      # y = checkpoint_label.unsqueeze(0)      # (1, B, 10, 2)
-
-      # # 3. 计算对数似然：log p(y | anchor_i) ~ N(mu_i, diag(var_i))
-      # with torch.no_grad():
-      #     diff = y - mu  # (N, B, 10, 2)，广播自动对齐
-      #     inv_var = 1.0 / (var + 1e-8)  # 防止除零
-
-      #     # 对数概率密度（对角高斯）
-      #     # log p = -0.5 * [log(2πσ²) + (x-μ)²/σ²]
-      #     log_prob = -0.5 * (
-      #         torch.log(2 * torch.pi * var + 1e-8)  # log(2πσ²)
-      #         + (diff ** 2) * inv_var               # (x-μ)^2 / σ²
-      #     )  # (N, B, 10, 2)
-
-      #     # 对时间步 T=10 和坐标维度 2 求和 → (N, B)
-      #     log_likelihood = log_prob.sum(dim=[2, 3])  # sum over T and x/y
-
-      #     # 4. 构造 soft labels using log-likelihood
-      #     scores = log_likelihood / self.config.temperature  # (N, B)
-
-      #     # 数值稳定性：减去每 batch 的最大值
-      #     scores = scores - scores.max(dim=0, keepdim=True)[0]  # (N, B)
-
-      #     # Softmax over anchors (dim=0)
-      #     soft_labels = F.softmax(scores, dim=0)  # (N, B)
-
-      #     # 防止极端值
-      #     soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
       
       kl_loss = F.kl_div(
             torch.log(pred_traj_probs + 1e-8),  # 输入应该是log(prediction)
@@ -612,7 +586,6 @@ class LidarCenterNet(nn.Module):
       loss.update({'loss_weighted_regression': weighted_regression_loss})
 
       # BEST TRAJECTORY LOSS - Supervision for the best trajectory
-      # min_distances, best_indices = torch.min(distances, dim=0)
       min_distances, best_indices = torch.min(distances, dim=0)
       best_pred_trajectories = pred_trajectories[best_indices, torch.arange(batch_size)]
       best_trajectory_loss = F.smooth_l1_loss(best_pred_trajectories, checkpoint_label)

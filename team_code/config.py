@@ -488,8 +488,9 @@ class GlobalConfig:
         # 'loss_wp': 1.0,
         'loss_weighted_regression': 0.01,
         'loss_best_trajectory': 1.0,
-        'loss_kl_div': 1.0,
+        'loss_traj_kl_div': 1.0,
         'loss_target_speed': 1.0,
+        'loss_speed_kl_div': 1.0,
         # 'diffusion_loss_velocity': 1,
         # 'diffusion_loss_traj_recon': 1,
         # 'diffusion_loss_speed_recon': 1,
@@ -512,7 +513,7 @@ class GlobalConfig:
         'loss_brake': 1.0,
         'loss_forcast': 0.2,
         'loss_selection': 0.0,
-        'loss_task_encoder_kl' : 1e-3,  # KL损失的权重
+        'loss_task_encoder_kl' : 1e-7,  # KL损失的权重
         'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
         # 'loss_task_encoder_anchor': 0.05,
         # 'task_encoder/avg_alignment_distance': 1,
@@ -925,7 +926,7 @@ class GlobalConfig:
     # Fuse feat front door encoder and anchor
     # -----------------------------------------------------------------------------
     self.use_prior_fuseFeat = True
-    self.prior_fuseFeat_path = "./dpmm_feature/noMoe_wTFFde/Emergency_Brake/tracked_clusters/Emergency_Brake-epoch00-iter000-20251212_164904-tracked_clusters.pkl"
+    self.prior_fuseFeat_path = []
     self.ff_de_dim = 256  # 速度编码器维度
     self.ff_num_heads = 8  # 注意力头数
     self.ff_dropout = 0.1  # dropout率

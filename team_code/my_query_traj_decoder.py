@@ -18,7 +18,7 @@ class PlanningTrajectoryDecoder(nn.Module):
     - scores: (num_anchors, batch_size) - Confidence scores for each trajectory
     
     Note: 
-    - Each trajectory represents 6 future waypoints (0.5s, 1.0s, ..., 3.0s)
+    - Each trajectory represents 10 future waypoints 
     - Coordinates are in ego-vehicle frame (meters)
     """
     

@@ -77,7 +77,7 @@ class PlanningTrajectoryDecoder(nn.Module):
         )
         
         # 路由温度参数（控制选择的锐利度）
-        self.routing_temperature = nn.Parameter(torch.tensor(1.0))
+        # self.routing_temperature = nn.Parameter(torch.tensor(1.0))
         
         self._init_weights()
     
@@ -125,7 +125,7 @@ class PlanningTrajectoryDecoder(nn.Module):
                     nn.init.zeros_(m.bias)
         
         # 路由温度初始化
-        nn.init.constant_(self.routing_temperature, 1.0)
+        # nn.init.constant_(self.routing_temperature, 1.0)
 
     def forward(self, encoder_out):
         """
@@ -158,8 +158,9 @@ class PlanningTrajectoryDecoder(nn.Module):
         
         # 5. 计算路由权重
         routing_logits = self._compute_routing_weights(cls_features)  # (batch_size, num_anchors)
-        routing_weights = F.softmax(routing_logits / self.routing_temperature, dim=-1)
-        scores = routing_weights.permute(1,0)
+        # routing_weights = F.softmax(routing_logits / self.routing_temperature, dim=-1)
+        # scores = routing_weights.permute(1,0)
+        scores = routing_logits.permute(1,0)
         
         # 6. 预测轨迹偏移（使用同一个offset_head，保持现有结构）
         offsets = self.offset_head(anchor_features)  # (num_anchors, batch_size, 20)

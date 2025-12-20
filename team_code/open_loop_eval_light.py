@@ -41,6 +41,9 @@ from collections import defaultdict
 import pandas as pd
 from scipy.spatial.distance import cdist
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, f1_score
+import time
+import psutil
+import GPUtil
 
 
 # import sys
@@ -50,16 +53,18 @@ from sklearn.metrics import confusion_matrix, classification_report, accuracy_sc
 # parent_dir = os.path.dirname(current_dir)
 # sys.path.insert(0, parent_dir)
 # Import your model and data classes
-from my_model_moe_v2 import LidarCenterNet
+from my_model_wTFFde import LidarCenterNet
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
 import transfuser_utils as t_u
 
 import random
 
+from utils import print_data_info
+
 
 class BEV_mIoU:
-    def __init__(self, num_classes, ignore_index=-1):
+    def __init__(self, num_classes, ignore_index=0):
         self.num_classes = num_classes
         self.ignore_index = ignore_index
         self.reset()
@@ -86,11 +91,16 @@ class BEV_mIoU:
         # Flatten batch dimensions
         pred_flat = pred_np.ravel()
         target_flat = target_np.ravel()
+        # print(f'check 1 bev sem pred: {pred_flat[:20]}')
+        # print(f'check 1 bev sem gt: {target_flat[:20]}')
         
         # Filter out ignore_index (-1)
         mask = target_flat != self.ignore_index
         pred_valid = pred_flat[mask]
         target_valid = target_flat[mask]
+
+        # print_data_info(target_flat)
+        # print_data_info(target_valid)
         
         # Build confusion matrix for this batch
         if len(target_valid) > 0:
@@ -126,7 +136,7 @@ class BEV_mIoU:
     def compute_miou(self):
         """Compute mean IoU (excluding classes with NaN)"""
         iou_per_class = self.compute_iou_per_class()
-        valid_ious = iou_per_class[~np.isnan(iou_per_class)]
+        valid_ious = iou_per_class[~np.isnan(iou_per_class) & (iou_per_class > 0)]
         
         if len(valid_ious) > 0:
             return float(np.mean(valid_ious))
@@ -143,42 +153,42 @@ class BEV_mIoU:
             'confusion_matrix': self.confusion_matrix.tolist()
         }
     
-    def compute_iou_per_class(self):
-        """Compute IoU for each class"""
-        iou_per_class = np.zeros(self.num_classes, dtype=np.float32)
+    # def compute_iou_per_class(self):
+    #     """Compute IoU for each class"""
+    #     iou_per_class = np.zeros(self.num_classes, dtype=np.float32)
         
-        for i in range(self.num_classes):
-            tp = self.confusion_matrix[i, i]
-            fp = self.confusion_matrix[:, i].sum() - tp
-            fn = self.confusion_matrix[i, :].sum() - tp
+    #     for i in range(self.num_classes):
+    #         tp = self.confusion_matrix[i, i]
+    #         fp = self.confusion_matrix[:, i].sum() - tp
+    #         fn = self.confusion_matrix[i, :].sum() - tp
             
-            denominator = tp + fp + fn
-            if denominator > 0:
-                iou_per_class[i] = tp / denominator
-            else:
-                iou_per_class[i] = float('nan')  # Class not present
+    #         denominator = tp + fp + fn
+    #         if denominator > 0:
+    #             iou_per_class[i] = tp / denominator
+    #         else:
+    #             iou_per_class[i] = float('nan')  # Class not present
         
-        return iou_per_class
+    #     return iou_per_class
     
-    def compute_miou(self):
-        """Compute mean IoU (excluding classes with NaN)"""
-        iou_per_class = self.compute_iou_per_class()
-        valid_ious = iou_per_class[~np.isnan(iou_per_class)]
+    # def compute_miou(self):
+    #     """Compute mean IoU (excluding classes with NaN)"""
+    #     iou_per_class = self.compute_iou_per_class()
+    #     valid_ious = iou_per_class[~np.isnan(iou_per_class)]
         
-        if len(valid_ious) > 0:
-            return float(np.mean(valid_ious))
-        return 0.0
+    #     if len(valid_ious) > 0:
+    #         return float(np.mean(valid_ious))
+    #     return 0.0
     
-    def get_results(self):
-        """Return mIoU and per-class IoU"""
-        iou_per_class = self.compute_iou_per_class()
-        miou = self.compute_miou()
+    # def get_results(self):
+    #     """Return mIoU and per-class IoU"""
+    #     iou_per_class = self.compute_iou_per_class()
+    #     miou = self.compute_miou()
         
-        return {
-            'mIoU': miou,
-            'IoU_per_class': iou_per_class.tolist(),
-            'confusion_matrix': self.confusion_matrix.tolist()
-        }
+    #     return {
+    #         'mIoU': miou,
+    #         'IoU_per_class': iou_per_class.tolist(),
+    #         'confusion_matrix': self.confusion_matrix.tolist()
+    #     }
 
 class OpenLoopEvaluator:
     """Evaluator for open-loop trajectory and speed prediction"""
@@ -236,14 +246,19 @@ class OpenLoopEvaluator:
         self.predictions = []
         self.ground_truths = []
 
-        # Add BEV mIoU calculator initialization
+        # # Add BEV mIoU calculator initialization
         # self.bev_miou_calculator = BEV_mIoU(
-        #     num_classes=config.num_bev_semantic_classes,
-        #     ignore_index=-1 
+        #     num_classes=config.num_bev_semantic_classes,  # for unlabeled is ignored
+        #     ignore_index=0
         # )
         
         # # Add to metrics storage
         # self.metrics['bev_semantic'] = defaultdict(list)
+
+        # # 性能监控相关
+        # self.inference_times = []  # 存储每个batch的推理时间
+        # self.memory_usages = []    # 存储每个batch的显存使用
+        # self.cpu_usages = []       # 存储CPU使用率
 
     def set_random_seed(self, seed):
         """设置所有相关的随机种子"""
@@ -369,30 +384,77 @@ class OpenLoopEvaluator:
         if 'ability' in data:
             scenario = data['ability'][0] if isinstance(data['ability'], list) else data['ability']
 
-        # # Get BEV ground truth if available
-        # bev_gt = None
-        # if 'bev_semantic' in data:
-        #     bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
+        # Get BEV ground truth if available
+        bev_gt = None
+        if 'bev_semantic' in data:
+            bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
+
+        # # 记录处理前的显存使用
+        # torch.cuda.synchronize() if torch.cuda.is_available() else None
+        # start_time = time.time()
+        
+        # # 记录处理前的显存
+        # if torch.cuda.is_available():
+        #     start_memory = torch.cuda.memory_allocated(self.device) / 1024**2  # MB
+        #     start_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2  # MB
         
         # Model forward pass
-        pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
+        pred_wp, pred_target_speed, pred_checkpoint, _, pred_bev_semantic, _, _, _, _, _ = self.model(
             rgb=rgb,
             lidar_bev=lidar,
             target_point=target_point,
             ego_vel=ego_vel,
             command=command
         )
+
+        # # 同步并记录时间
+        # torch.cuda.synchronize() if torch.cuda.is_available() else None
+        # inference_time = time.time() - start_time
+        
+        # # 记录推理后的显存使用
+        # if torch.cuda.is_available():
+        #     end_memory = torch.cuda.memory_allocated(self.device) / 1024**2  # MB
+        #     end_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2  # MB
+        #     peak_memory = torch.cuda.max_memory_allocated(self.device) / 1024**2  # MB
+        #     peak_memory_reserved = torch.cuda.max_memory_reserved(self.device) / 1024**2  # MB
+            
+        #     # 记录显存使用信息
+        #     memory_info = {
+        #         'allocated_before': start_memory,
+        #         'allocated_after': end_memory,
+        #         'allocated_peak': peak_memory,
+        #         'reserved_before': start_memory_reserved,
+        #         'reserved_after': end_memory_reserved,
+        #         'reserved_peak': peak_memory_reserved,
+        #         'inference_time': inference_time,
+        #         'batch_size': data['rgb'].shape[0],
+        #         'batch_idx': batch_idx
+        #     }
+        # else:
+        #     memory_info = {
+        #         'inference_time': inference_time,
+        #         'batch_size': data['rgb'].shape[0],
+        #         'batch_idx': batch_idx
+        #     }
+        
+        # # 记录CPU使用率
+        # cpu_percent = psutil.cpu_percent(interval=None)
+        
+        # # 存储性能数据
+        # self.inference_times.append(inference_time)
+        # self.memory_usages.append(memory_info)
+        # self.cpu_usages.append(cpu_percent)
         
         # Convert predictions
         # print(f'pred_target_speed shape: {pred_target_speed.shape}')
         batch_size = pred_target_speed.shape[0] if pred_target_speed is not None else 1
         
-        # Handle different prediction types
-        if pred_trajectories is not None and pred_traj_probs is not None:
-            # Select best trajectory (top-1)
-            best_anchor_indices = torch.argmax(pred_traj_probs, dim=0)
-            batch_indices = torch.arange(batch_size, device=pred_trajectories.device)
-            pred_checkpoint = pred_trajectories[best_anchor_indices, batch_indices]
+        # # Handle different prediction types
+        # if pred_trajectories is not None and pred_traj_probs is not None:
+        #     # Select best trajectory (top-1)
+        #     best_anchor_indices = torch.argmax(pred_traj_probs, dim=0)
+        #     batch_indices = torch.arange(batch_size, device=pred_trajectories.device)
+        #     pred_checkpoint = pred_trajectories[best_anchor_indices, batch_indices]
         # else:
         #     # Fallback: use waypoints if available
         #     if pred_wp is not None:
@@ -424,7 +486,7 @@ class OpenLoopEvaluator:
                 'checkpoints': gt_checkpoints[i].cpu().numpy(),
                 'speed_class': gt_speed[i].item(),
                 'scenario': scenario,
-                # Add BEV ground truth
+                # # Add BEV ground truth
                 # 'bev_semantic': bev_gt[i].cpu().numpy() if bev_gt is not None else None
             })
         
@@ -438,7 +500,7 @@ class OpenLoopEvaluator:
             scenario
         )
 
-        # Update BEV mIoU calculator
+        # # Update BEV mIoU calculator
         # if bev_gt is not None and pred_bev_semantic is not None:
         #     self.bev_miou_calculator.update(pred_bev_semantic, bev_gt)
     
@@ -656,12 +718,12 @@ class OpenLoopEvaluator:
         # 4. Overall Score (weighted combination)
         if 'ADE_mean' in self.metrics['summary'] and 'speed_accuracy' in self.metrics['summary']:
             # Normalize ADE (assuming typical range 0-10m)
-            normalized_ade = min(1.0, self.metrics['summary']['ADE_mean'] / 1.0)
+            normalized_ade = min(1.0, self.metrics['summary']['ADE_mean'] / 10.0)
             speed_acc_normalized = self.metrics['summary']['speed_accuracy'] / 100.0
             
             # Weighted score (adjust weights as needed)
-            trajectory_weight = 0.5
-            speed_weight = 0.5
+            trajectory_weight = 0.7
+            speed_weight = 0.3
             
             overall_score = (1 - normalized_ade) * trajectory_weight + speed_acc_normalized * speed_weight
             self.metrics['summary']['overall_score'] = overall_score
@@ -681,16 +743,53 @@ class OpenLoopEvaluator:
         # print(f"BEV mIoU: {bev_results['mIoU']:.4f}")
         
         # # Print per-class IoU if you have class names
+        # print("\nBEV Per-class IoU:")
+        # for i, iou in enumerate(bev_results['IoU_per_class']):
+        #     if not np.isnan(iou) and iou>0:
+        #         print(f"  Class {i}: {iou:.4f}")
         # if hasattr(self.config, 'bev_class_names') and self.config.bev_class_names:
         #     print("\nBEV Per-class IoU:")
         #     for i, (class_name, iou) in enumerate(zip(self.config.bev_class_names, bev_results['IoU_per_class'])):
-        #         if not np.isnan(iou):
+        #         if not np.isnan(iou) and iou>0:
         #             print(f"  {class_name}: {iou:.4f}")
         # else:
         #     print("\nBEV Per-class IoU:")
         #     for i, iou in enumerate(bev_results['IoU_per_class']):
-        #         if not np.isnan(iou):
+        #         if not np.isnan(iou) and iou>0:
         #             print(f"  Class {i}: {iou:.4f}")
+
+        # # 添加性能指标
+        # print("\n--- Performance Metrics ---")
+        # performance_stats = self.analyze_computing_performance()
+        
+        # if performance_stats:
+        #     self.metrics['summary']['performance'] = performance_stats
+            
+        #     # 打印性能指标
+        #     if 'inference_time' in performance_stats:
+        #         stats = performance_stats['inference_time']
+        #         print(f"Inference Time per batch:")
+        #         print(f"  Mean: {stats['mean']:.4f}s")
+        #         print(f"  Std: {stats['std']:.4f}s")
+        #         print(f"  Min: {stats['min']:.4f}s")
+        #         print(f"  Max: {stats['max']:.4f}s")
+        #         print(f"  Total: {stats['total']:.2f}s")
+        #         print(f"  FPS (mean): {stats['fps_mean']:.2f}")
+        #         print(f"  FPS (median): {stats['fps_median']:.2f}")
+            
+        #     if 'cpu_usage' in performance_stats:
+        #         stats = performance_stats['cpu_usage']
+        #         print(f"CPU Usage:")
+        #         print(f"  Mean: {stats['mean']:.1f}%")
+        #         print(f"  Max: {stats['max']:.1f}%")
+            
+        #     if 'gpu_memory' in performance_stats:
+        #         stats = performance_stats['gpu_memory']
+        #         print(f"GPU Memory:")
+        #         print(f"  Allocated Peak (mean): {stats['allocated_peak_mean']:.1f} MB")
+        #         print(f"  Allocated Peak (max): {stats['allocated_peak_max']:.1f} MB")
+        #         print(f"  Reserved Peak (mean): {stats['reserved_peak_mean']:.1f} MB")
+        #         print(f"  Reserved Peak (max): {stats['reserved_peak_max']:.1f} MB")
     
     def save_results(self):
         """Save evaluation results to files"""
@@ -751,6 +850,66 @@ class OpenLoopEvaluator:
             json.dump(serializable_metrics, f, indent=2)
         
         print(f"\nMetrics saved to: {metrics_file}")
+
+    def analyze_computing_performance(self):
+        """分析并汇总性能指标"""
+        if not self.inference_times:
+            return {}
+        
+        performance_stats = {}
+        
+        # 推理时间统计
+        inference_times = np.array(self.inference_times)
+        performance_stats['inference_time'] = {
+            'mean': float(np.mean(inference_times)),
+            'std': float(np.std(inference_times)),
+            'min': float(np.min(inference_times)),
+            'max': float(np.max(inference_times)),
+            'median': float(np.median(inference_times)),
+            'total': float(np.sum(inference_times)),
+            'fps_mean': float(1.0 / np.mean(inference_times) * self.config.batch_size),
+            'fps_median': float(1.0 / np.median(inference_times) * self.config.batch_size),
+        }
+        
+        # CPU使用率统计
+        if self.cpu_usages:
+            cpu_usages = np.array(self.cpu_usages)
+            performance_stats['cpu_usage'] = {
+                'mean': float(np.mean(cpu_usages)),
+                'std': float(np.std(cpu_usages)),
+                'min': float(np.min(cpu_usages)),
+                'max': float(np.max(cpu_usages)),
+                'median': float(np.median(cpu_usages)),
+            }
+        
+        # GPU显存统计
+        if self.memory_usages and torch.cuda.is_available():
+            allocated_peaks = [m['allocated_peak'] for m in self.memory_usages]
+            reserved_peaks = [m['reserved_peak'] for m in self.memory_usages]
+            
+            performance_stats['gpu_memory'] = {
+                'allocated_peak_mean': float(np.mean(allocated_peaks)),
+                'allocated_peak_max': float(np.max(allocated_peaks)),
+                'reserved_peak_mean': float(np.mean(reserved_peaks)),
+                'reserved_peak_max': float(np.max(reserved_peaks)),
+            }
+            
+            # 获取GPU信息
+            try:
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    gpu = gpus[0]  # 假设使用第一个GPU
+                    performance_stats['gpu_info'] = {
+                        'name': gpu.name,
+                        'driver': torch.version.cuda if torch.cuda.is_available() else 'N/A',
+                        'total_memory': gpu.memoryTotal,
+                        'utilization_mean': gpu.load * 100,
+                        'temperature_mean': gpu.temperature,
+                    }
+            except Exception as e:
+                print(f"Warning: Could not get GPU info: {e}")
+        
+        return performance_stats
     
     def visualize_results(self):
         """Generate visualization plots"""
@@ -851,7 +1010,7 @@ class OpenLoopEvaluator:
             self.plot_sample_trajectories()
 
         # Add BEV semantic visualization
-        self.plot_bev_semantic_samples()    
+        # self.plot_bev_semantic_samples()    
         
         print(f"Visualizations saved to: {figures_dir}")
 
@@ -1092,8 +1251,8 @@ def main():
             if 'speed_f1_score' in metrics['summary']:
                 print(f"Speed F1 Score: {metrics['summary']['speed_f1_score']:.2f}%")
 
-        if 'bev_miou' in metrics['summary']:
-            print(f"\nBEV Semantic mIoU: {metrics['summary']['bev_miou']:.4f}")
+        # if 'bev_miou' in metrics['summary']:
+        #     print(f"\nBEV Semantic mIoU: {metrics['summary']['bev_miou']:.4f}")
     
     print(f"\nDetailed results saved to: {args.output_dir}")
 

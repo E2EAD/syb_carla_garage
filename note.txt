@@ -27,27 +27,8 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 #TODO
 1. fix vis model in my_model*
-2. for moe_lh may need to change the scheduler:
-'''
-scheduler = torch.optim.lr_scheduler.OneCycleLR(
-    optimizer,
-    max_lr=3e-4,
-    total_steps=num_epochs,
-    pct_start=0.3,           # 前 30% 时间用于 warmup
-    anneal_strategy='cos',
-    div_factor=10,           # warmup 从 3e-5 开始
-    final_div_factor=1000    # 最终降到 3e-7
-)
-'''
-3. use distill loss to supervise score head (score_kl_div, only the same id anchors), or stop updating early.
-4. fix MoEv02's distance calcu, update its agent for testing.
-5. idea for dpmm online updating (fitting fuse feat):
-'''
-the idea is to integrate the dpmm model into the model, use it to fit the joined_checkpoint_features data. 
-a buffer is used to store the data for fitting, a para is set to determine after how many iterations of the data storing into the buffer 
-(like 5 times per epoch), a fitting of dpmm (both the data in the buffer and sampled from all the passed clusters) is carried out, 
-then store the tracked clusters(id, mu, var) into a pkl/pt/npz or any suitable data structure in 'dpmm_results/'
-+exp_time+'/track_cluster_log/'+str(task_id)+'-'+str(epoch)+'-'+str(batch_idx)+"-tracked_clusters.pkl/pt/etc". 
-what's more i want to monitor the number of the cluster after every epoch on tensor board
-'''
 6. use the metrics (FWT, NBT, AUC) from the LEBRO
+7. for open loop eval code, add proper way to manage the bev sem results, and add the ability info so that the metrics for every ability could be seen
+8. old planning tokens may need to be frozen as well
+9. need early  stopping?
+10. need isolating the score head?
