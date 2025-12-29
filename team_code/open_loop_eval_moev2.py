@@ -3,8 +3,7 @@ Open-loop evaluation script for trajectory and speed prediction models.
 Usage:
 python open_loop_eval.py --logdir /path/to/model_folder --data_root /path/to/dataset --output_dir /path/to/results
 i.e. :
-python ./team_code/open_loop_eval.py --logdir ./log/syb_train_noMoe_4-gw --data_root /media/syb/syb_disk_2/b2d_base_v3/carla_dataset
- --output_dir ./ol_test_result/syb_train_noMoe_4-gw
+python ./team_code/open_loop_eval.py --logdir  --data_root --output_dir --model_file
 
  add the following text into model folder's config.json:
      "bev_class_names" : [
@@ -375,7 +374,7 @@ class OpenLoopEvaluator:
         #     bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
         
         # Model forward pass
-        pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
+        pred_wp, pred_target_speed, pred_trajectories, pred_traj_logits, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
             rgb=rgb,
             lidar_bev=lidar,
             target_point=target_point,
