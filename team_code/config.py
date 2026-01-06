@@ -861,7 +861,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Emergency_Brake' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
@@ -926,6 +926,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Fuse feat front door encoder and anchor
     # -----------------------------------------------------------------------------
+    self.use_traj_front_door_encoder = True
     self.use_prior_fuseFeat = False
     self.prior_fuseFeat_path = []
     self.ff_de_dim = 256  # 速度编码器维度

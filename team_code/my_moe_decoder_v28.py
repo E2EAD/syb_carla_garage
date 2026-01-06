@@ -236,6 +236,7 @@ class PlanningTrajectoryDecoder(nn.Module):
             scores: (num_anchors, batch_size) - Confidence scores
         """
         batch_size = encoder_out.size(0)
+        seq_len = encoder_out.size(1)
         
         # Transpose for transformer: (seq_len, batch_size, dim)
         memory = encoder_out.permute(1, 0, 2)
@@ -309,9 +310,14 @@ class PlanningTrajectoryDecoder(nn.Module):
         # Score experts process all time steps concatenated
         # Prepare input: (num_anchors, batch_size, num_timesteps * dim)
         # decoder_for_score = decoder_out_transposed.reshape(num_anchors, batch_size, -1)
-        decoder_for_score = decoder_out_transposed.reshape(num_anchors, batch_size, -1)
-        decoder_for_score_flat = decoder_for_score.reshape(-1, num_timesteps * dim)
-        
+        # decoder_for_score = decoder_out_transposed.reshape(num_anchors, batch_size, -1)
+        # decoder_for_score_flat = decoder_for_score.reshape(-1, num_timesteps * dim)
+
+        decoder_for_score = memory_expanded.permute(1, 0, 2)
+        # print_data_info(decoder_for_score)
+        decoder_for_score_flat = decoder_for_score.reshape(-1, seq_len * dim)
+        # print_data_info(decoder_for_score_flat)
+
         scores = []
         
         for start_idx in range(0, num_anchors, chunk_size):

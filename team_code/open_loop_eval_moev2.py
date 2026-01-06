@@ -49,7 +49,7 @@ from sklearn.metrics import confusion_matrix, classification_report, accuracy_sc
 # parent_dir = os.path.dirname(current_dir)
 # sys.path.insert(0, parent_dir)
 # Import your model and data classes
-from my_model_moe_v2 import LidarCenterNet
+from my_model_wTFFdeQtd import LidarCenterNet
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
 import transfuser_utils as t_u
@@ -219,7 +219,7 @@ class OpenLoopEvaluator:
             self.dataset,
             batch_size=config.batch_size,
             shuffle=False,
-            num_workers=4,
+            num_workers=24,
             pin_memory=True,
             drop_last=False
         )
@@ -374,7 +374,7 @@ class OpenLoopEvaluator:
         #     bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
         
         # Model forward pass
-        pred_wp, pred_target_speed, pred_trajectories, pred_traj_logits, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
+        pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
             rgb=rgb,
             lidar_bev=lidar,
             target_point=target_point,
