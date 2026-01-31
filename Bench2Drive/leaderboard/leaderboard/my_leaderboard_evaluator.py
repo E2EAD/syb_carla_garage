@@ -90,7 +90,7 @@ class LeaderboardEvaluator(object):
     """
 
     # Tunable parameters
-    client_timeout = 600.0  # in seconds
+    client_timeout = 480.0  # in seconds
     frame_rate = 20.0      # in Hz
 
     def __init__(self, args, statistics_manager):
@@ -419,7 +419,7 @@ class LeaderboardEvaluator(object):
             self.agent_instance = agent_class_obj(args.host, args.port, args.debug)
             self.agent_instance.set_global_plan(self.route_scenario.gps_route, self.route_scenario.route)
             args.agent_config = args.agent_config + '+' + save_name
-            self.agent_instance.setup(args.agent_config)
+            self.agent_instance.setup(args.agent_config, route_index=config.name)
 
             # Check and store the sensors
             if not self.sensors:
@@ -579,7 +579,7 @@ def main():
                         help='Run with debug output', default=0)
     parser.add_argument('--record', type=str, default='',
                         help='Use CARLA recording feature to create a recording of the scenario')
-    parser.add_argument('--timeout', default=600.0, type=float,
+    parser.add_argument('--timeout', default=480.0, type=float,
                         help='Set the CARLA client timeout value in seconds')
 
     # simulation setup

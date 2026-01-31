@@ -162,6 +162,8 @@ def main(args):
     Ability_Res['crashed'] = crash_route_list
     with open(f"{result_file.split('.')[0]}_ability.json", 'w') as file:
         json.dump(Ability_Res, file, indent=4)
+        save_path = result_file.split('.')[0] + "_ability.json"
+        print(f'save in {save_path}')
         
     Success_Res = {}
     Route_num = 0
@@ -176,6 +178,7 @@ def main(args):
     print('Finished!')
 
 if __name__=='__main__':
+    # need to export CARLA_ROOT=/home/dpc/djy/carla2 first
     argparser = argparse.ArgumentParser(description=__doc__)
     argparser.add_argument('-f', '--file', nargs=None, default="leaderboard/data/bench2drive220.xml", help='route file')
     argparser.add_argument('-r', '--result_file', nargs=None, default="", help='result json file')

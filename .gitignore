@@ -215,3 +215,7 @@ pretrained_models/
 my_dpmm_model/results
 log/
 team_code/dpmm_results
+visualizaton_result
+*.json
+dpmm_feature
+*.zip

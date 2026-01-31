@@ -35,7 +35,8 @@ class Ability_CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-
                shared_dict=None,
                rank=0,
                validation=False,
-               ability = None):
+               ability = None,
+               ability_list = None):
     self.config = config
     self.validation = validation
     assert config.img_seq_len == 1
@@ -87,9 +88,22 @@ class Ability_CARLA_Data(Dataset):  # pylint: disable=locally-disabled, invalid-
     scenario_list = [os.path.join(root, d) for d in os.listdir(root) 
                            if os.path.isdir(os.path.join(root, d))]
     print('scenario_list:', scenario_list)
-    selected_ability = ability
-    selected_scenarios = self.Ability.get(selected_ability, [])
-    print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
+    
+    if ability != None and ability_list == None:
+      print('ability data get 1 selection')
+      selected_ability = ability
+      selected_scenarios = self.Ability.get(selected_ability, [])
+      print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
+    elif ability == None and ability_list != None:
+      print('ability data get a few selections')
+      selected_scenarios = []
+      for ability in ability_list:
+        selected_ability = ability
+        selected_scenarios.extend(self.Ability.get(selected_ability, []))
+      print(f"Selected scenarios for {selected_ability}: {selected_scenarios}")
+    else:
+      print('ability data need input 1 single or 1 list of abilities.')
+      return
     filtered_roots = [
         path for path in scenario_list
         if os.path.basename(path) in selected_scenarios

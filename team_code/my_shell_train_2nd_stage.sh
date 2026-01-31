@@ -2,7 +2,7 @@
 
 # export CARLA_ROOT=~/software/CARLA_Leaderboard_20
 
-export CARLA_ROOT=/home/syb/carla/carla_0_9_15
+export CARLA_ROOT=/home/dpc/djy/carla2
 
 export PYTHONPATH=$PYTHONPATH:${CARLA_ROOT}/PythonAPI
 export PYTHONPATH=$PYTHONPATH:${CARLA_ROOT}/PythonAPI/carla
@@ -10,9 +10,9 @@ export PYTHONPATH=$PYTHONPATH:${CARLA_ROOT}/PythonAPI/carla/dist/carla-0.9.14-py
 export PYTHONPATH="${CARLA_ROOT}/PythonAPI/carla/":${PYTHONPATH}
 # export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:~/software/anaconda3/lib
 
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/syb/anaconda3/lib
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/dpc/miniconda3/lib
 
-export PROJECT_ROOT=/home/syb/carla_garage
+export PROJECT_ROOT=/home/dpc/syb/carla_garage
 
 export OMP_NUM_THREADS=8  # Limits pytorch to spawn at most num cpus cores threads
 export OPENBLAS_NUM_THREADS=1  # Shuts off numpy multithreading, to avoid threads spawning other threads.
@@ -35,9 +35,9 @@ export OPENBLAS_NUM_THREADS=1  # Shuts off numpy multithreading, to avoid thread
 export HF_DATASETS_OFFLINE=1
 export HF_HUB_OFFLINE=1
 
-torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=syb_train_250930_1600_2stg --rdzv_backend=c10d \
-    team_code/my_train_moe.py --id syb_train_moe_2stg --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
-    --root_dir /home/syb/b2d_mini_v2 \
+torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=syb_train_251120 --rdzv_backend=c10d \
+    team_code/my_train_ability_denoiser.py --id syb_train_dn_2stg --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 6 --batch_size 2 --lr 3e-4 --setting all \
+    --root_dir /home/dpc/syb/mini_dataset \
     --logdir ${PROJECT_ROOT}/log \
-    --use_controller_input_prediction 1 --use_wp_gru 0 --continue_epoch 0 --cpu_cores 32 --use_depth 0 --use_semantic 0 --detect_boxes 1 --use_bev_semantic 1 \
+    --use_controller_input_prediction 1 --use_wp_gru 0 --continue_epoch 0 --cpu_cores 8 --use_depth 0 --use_semantic 0 --detect_boxes 1 --use_bev_semantic 1 \
     --image_architecture regnety_032 --lidar_architecture regnety_032 --load_file ${PROJECT_ROOT}/log/syb_tfpp_withB2dTrajFit_stg1/model_0030.pth

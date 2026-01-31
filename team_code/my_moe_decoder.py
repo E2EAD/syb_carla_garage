@@ -77,10 +77,15 @@ class PlanningTrajectoryDecoder(nn.Module):
         #     nn.ReLU(),
         #     nn.Linear(cfg.tf_de_dim//4, 20)
         # )
-        self.experts = nn.Sequential(*[
-            TrajectoryExpert(cfg.tf_de_dim, 20)
-            for _ in range(self.num_anchors)
-        ])
+        # self.num_experts = 99
+        # self.experts = nn.Sequential(*[
+        #     TrajectoryExpert(cfg.tf_de_dim, 20)
+        #     for _ in range(self.num_experts)
+        # ])
+
+        # 初始化专家（先空着，后面 load 时再决定）
+        self.experts = nn.ModuleList()
+        self._build_experts(self.num_anchors)  # 初始构建
         
         # Score prediction head (confidence for each trajectory)
         # FIXED: Score head with better initialization and structure
@@ -95,6 +100,15 @@ class PlanningTrajectoryDecoder(nn.Module):
         )
         
         self._init_weights()
+
+    def _build_experts(self, num_experts):
+        """构建指定数量的 experts"""
+        experts = nn.ModuleList([
+            TrajectoryExpert(self.cfg.tf_de_dim, 20)
+            for _ in range(num_experts)
+        ])
+        self.experts = experts
+        self.num_anchors = num_experts
     
     def _create_anchors(self, anchor_path=None):
         """
@@ -234,41 +248,228 @@ class PlanningTrajectoryDecoder(nn.Module):
         # 重塑为 (num_anchors * batch_size, feat_dim)
         decoder_flat = decoder_out.reshape(-1, feat_dim)
         
-        # 批量处理所有专家（分块避免内存溢出）
-        chunk_size = 32  # 根据GPU内存调整
-        all_offsets = []
+        # # 批量处理所有专家（分块避免内存溢出）
+        # chunk_size = 32  # 根据GPU内存调整
+        # all_offsets = []
         
+        # for start_idx in range(0, num_anchors, chunk_size):
+        #     end_idx = min(start_idx + chunk_size, num_anchors)
+        #     chunk_size_current = end_idx - start_idx
+            
+        #     # 当前chunk的输入: (chunk_size * batch_size, feat_dim)
+        #     chunk_input = decoder_flat[start_idx * batch_size : end_idx * batch_size]
+            
+        #     # 批量处理当前chunk的所有专家
+        #     chunk_offsets = []
+        #     for expert_idx in range(start_idx, end_idx):
+        #         # 当前专家的数据范围
+        #         data_start = (expert_idx - start_idx) * batch_size
+        #         data_end = (expert_idx - start_idx + 1) * batch_size
+        #         expert_data = chunk_input[data_start:data_end]
+                
+        #         # 专家前向传播
+        #         offset = self.experts[expert_idx](expert_data)
+        #         chunk_offsets.append(offset)
+            
+        #     # 堆叠当前chunk的结果
+        #     chunk_offsets = torch.stack(chunk_offsets, dim=0)  # (chunk_size, batch_size, 20)
+        #     all_offsets.append(chunk_offsets)
+        
+        # # 合并所有chunk的结果
+        # traj_offsets = torch.cat(all_offsets, dim=0)  # (num_anchors, batch_size, 20)
+
+        # 获取当前实际使用的专家（前 num_anchors 个）
+        active_experts = self.experts[:num_anchors]  # ← 这是一个 Python list of modules
+        chunk_size = 32  # 根据GPU内存调整
+
+        # 分块处理
+        all_offsets = []
         for start_idx in range(0, num_anchors, chunk_size):
             end_idx = min(start_idx + chunk_size, num_anchors)
-            chunk_size_current = end_idx - start_idx
-            
-            # 当前chunk的输入: (chunk_size * batch_size, feat_dim)
             chunk_input = decoder_flat[start_idx * batch_size : end_idx * batch_size]
-            
-            # 批量处理当前chunk的所有专家
+
             chunk_offsets = []
-            for expert_idx in range(start_idx, end_idx):
-                # 当前专家的数据范围
-                data_start = (expert_idx - start_idx) * batch_size
-                data_end = (expert_idx - start_idx + 1) * batch_size
+            for local_idx, expert in enumerate(active_experts[start_idx:end_idx]):
+                data_start = local_idx * batch_size
+                data_end = (local_idx + 1) * batch_size
                 expert_data = chunk_input[data_start:data_end]
-                
-                # 专家前向传播
-                offset = self.experts[expert_idx](expert_data)
+                offset = expert(expert_data)
                 chunk_offsets.append(offset)
-            
-            # 堆叠当前chunk的结果
-            chunk_offsets = torch.stack(chunk_offsets, dim=0)  # (chunk_size, batch_size, 20)
+
+            chunk_offsets = torch.stack(chunk_offsets, dim=0)
             all_offsets.append(chunk_offsets)
-        
-        # 合并所有chunk的结果
-        traj_offsets = torch.cat(all_offsets, dim=0)  # (num_anchors, batch_size, 20)
+
+        traj_offsets = torch.cat(all_offsets, dim=0)
         
         pred_trajectories = anchors_expanded + traj_offsets
 
         scores = self.score_head(decoder_out).squeeze(-1)  # (num_anchors, batch_size)
         
         return pred_trajectories, scores
+    
+    def load_state_dict_with_resize(self, state_dict: dict, strict: bool = True):
+        """
+        自定义加载：支持 anchor 数量增加时自动扩展 experts
+        修复专家参数名匹配问题
+        """
+        # 获取当前设备
+        device = next(self.parameters()).device
+        
+        # 过滤掉 experts 相关的参数，我们单独处理
+        # 注意：专家参数可能是 'experts.' 或 'query_traj_decoder.experts.' 开头
+        local_state = {}
+        expert_params = {}
+        
+        for key, value in state_dict.items():
+            # 匹配两种可能的专家参数命名格式
+            if key.startswith('experts.') or '.experts.' in key:
+                expert_params[key] = value
+            else:
+                local_state[key] = value
+        
+        print(f"Found {len(expert_params)} expert parameters in checkpoint")
+        
+        if not expert_params:
+            print("No expert parameters found in checkpoint")
+            # 没有专家权重，直接构建并随机初始化
+            self._build_experts(self.num_anchors)
+            # 确保新专家在正确设备上
+            self.experts.to(device)
+            # 使用完整的 super() 调用
+            super(PlanningTrajectoryDecoder, self).load_state_dict(state_dict, strict=strict)
+            return
+
+        # 解析 checkpoint 中的 expert 数量
+        expert_indices = set()
+        for key in expert_params.keys():
+            # 匹配格式: experts.X.net... 或 query_traj_decoder.experts.X.net...
+            parts = key.split('.')
+            for i, part in enumerate(parts):
+                if part == 'experts' and i + 1 < len(parts):
+                    try:
+                        idx = int(parts[i + 1])
+                        expert_indices.add(idx)
+                        break
+                    except (ValueError, IndexError):
+                        continue
+        
+        if not expert_indices:
+            print("Warning: Could not parse expert indices from checkpoint")
+            ckpt_num_anchors = 0
+        else:
+            ckpt_num_anchors = max(expert_indices) + 1
+
+        current_num_anchors = self.num_anchors
+
+        print(f"[PlanningTrajectoryDecoder] Loading experts: "
+            f"checkpoint has {ckpt_num_anchors}, current model needs {current_num_anchors}")
+
+        # 构建新的 ModuleList
+        new_experts = nn.ModuleList()
+
+        # Step 1: 加载已有的专家（取 min 大小）
+        num_load = min(ckpt_num_anchors, current_num_anchors)
+
+        for i in range(num_load):
+            expert = TrajectoryExpert(self.cfg.tf_de_dim, 20)
+            expert = expert.to(device)
+            
+            # 提取第 i 个 expert 的所有参数，处理两种命名格式
+            expert_sd = {}
+            for key, value in expert_params.items():
+                # 匹配格式: experts.i.xxx 或 query_traj_decoder.experts.i.xxx
+                patterns = [f'experts.{i}.', f'.experts.{i}.']
+                if any(pattern in key for pattern in patterns):
+                    # 提取参数名（去掉前缀）
+                    if key.startswith('experts.'):
+                        param_name = key[len(f'experts.{i}.'):]
+                    else:
+                        # 找到 .experts.i. 的位置
+                        start_idx = key.find(f'.experts.{i}.') + 1  # +1 保留点
+                        param_name = key[start_idx + len(f'.experts.{i}'):]
+                    
+                    expert_sd[param_name] = value.to(device)
+            
+            if expert_sd:
+                try:
+                    expert.load_state_dict(expert_sd, strict=True)
+                    new_experts.append(expert)
+                    print(f"Successfully loaded expert {i}")
+                except Exception as e:
+                    print(f"Warning: Failed to load expert {i}: {e}")
+                    print(f"Expert state dict keys: {list(expert_sd.keys())}")
+                    # 如果加载失败，使用随机初始化的专家
+                    new_experts.append(expert)
+            else:
+                print(f"Warning: No parameters found for expert {i}")
+                new_experts.append(expert)
+
+        # Step 2: 如果当前 anchor 更多，扩展新专家
+        if current_num_anchors > ckpt_num_anchors:
+            print(f"Extending experts: adding {current_num_anchors - ckpt_num_anchors} new experts")
+
+            # 使用已有专家参数的平均值作为新专家的初始化模板
+            if num_load > 0:
+                avg_state = {}
+                # 收集所有专家的参数平均值
+                for name, param in new_experts[0].named_parameters():
+                    try:
+                        tensors = []
+                        for expert in new_experts[:num_load]:
+                            for n, p in expert.named_parameters():
+                                if n == name:
+                                    tensors.append(p.data.clone())
+                                    break
+                        if tensors:
+                            tensors_stack = torch.stack(tensors, dim=0)
+                            avg_state[name] = tensors_stack.mean(dim=0)
+                            print(f"Computed average for {name}: shape {avg_state[name].shape}")
+                    except Exception as e:
+                        print(f"Warning: Failed to compute average for {name}: {e}")
+            else:
+                avg_state = {}
+
+            # 创建新专家，使用平均权重初始化
+            for i in range(ckpt_num_anchors, current_num_anchors):
+                new_expert = TrajectoryExpert(self.cfg.tf_de_dim, 20)
+                new_expert = new_expert.to(device)
+                
+                if avg_state:
+                    # 手动设置新专家的参数
+                    for name, param in new_expert.named_parameters():
+                        if name in avg_state:
+                            param.data.copy_(avg_state[name])
+                            print(f"Initialized new expert {i} parameter {name} with average")
+                
+                new_experts.append(new_expert)
+                print(f"Created new expert {i}")
+
+        # 替换 experts
+        self.experts = new_experts
+        self.num_anchors = current_num_anchors
+
+        # 确保所有参数都在正确设备上
+        self.to(device)
+        
+        # 加载其他部分（非 experts）
+        try:
+            # 确保本地状态也在正确设备上
+            local_state_device = {k: v.to(device) for k, v in local_state.items()}
+            missing_keys, unexpected_keys = super(PlanningTrajectoryDecoder, self).load_state_dict(
+                local_state_device, strict=strict
+            )
+            
+            if missing_keys:
+                # print(f"Missing keys: {missing_keys}")
+                print(f"Missing {len(missing_keys)} keys")
+            if unexpected_keys:
+                # print(f"Unexpected keys: {unexpected_keys}")
+                print(f"Unexpected {len(unexpected_keys)} keys")
+                
+            print("Successfully loaded non-expert parameters")
+                
+        except Exception as e:
+            print(f"Warning: Failed to load non-expert parameters: {e}")
 
     # def predict(self, encoder_out, top_k=3):
     #     """

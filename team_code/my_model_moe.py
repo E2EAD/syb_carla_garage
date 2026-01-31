@@ -22,6 +22,7 @@ from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
 from my_moe_decoder import PlanningTrajectoryDecoder
+import json
 
 
 class LidarCenterNet(nn.Module):
@@ -447,6 +448,19 @@ class LidarCenterNet(nn.Module):
 
     return pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth, \
       pred_bounding_box, attention_weights, pred_wp_1, selected_path
+  
+  def load_anchor_mu_and_var(self, anchor_path):
+    with open(anchor_path, 'r') as f:
+        data = json.load(f)
+
+    # Extract first 20 elements (x,y for 10 waypoints) from each cluster's 'mu'
+    mu_list = [entry['mu'][:20] for entry in data]
+    anchors_mu = torch.tensor(mu_list, dtype=torch.float32)
+    var_list = [entry['var'][:20] for entry in data]
+    anchor_var = torch.tensor(var_list, dtype=torch.float32)
+    # print(f'read anchors mu and var from {anchor_path}')
+    return anchors_mu, anchor_var
+
 
   def compute_loss(self, pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, pred_semantic, pred_bev_semantic, pred_depth,
                    pred_bounding_box, pred_wp_1, selected_path, waypoint_label, target_speed_label, checkpoint_label,
@@ -469,12 +483,16 @@ class LidarCenterNet(nn.Module):
     #     loss_wp = torch.mean(torch.abs(pred_wp - waypoint_label))
     #     loss.update({'loss_wp': loss_wp})
 
+    anchor_mu, anchor_var = self.load_anchor_mu_and_var(self.config.prior_traj_path)
+
     if self.config.use_controller_input_prediction:
       loss_target_speed = self.loss_speed(pred_target_speed, target_speed_label)
       loss.update({'loss_target_speed': loss_target_speed})
 
       # loss_wp = torch.mean(torch.abs(pred_checkpoint - checkpoint_label))
       # loss.update({'loss_checkpoint': loss_wp})
+
+      # use distance to calcu soft label 
       num_anchors = pred_traj_probs.size(0)
       batch_size = pred_traj_probs.size(1)
       # 计算距离（添加数值稳定性）
@@ -499,6 +517,50 @@ class LidarCenterNet(nn.Module):
           
           # 确保概率分布有效
           soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+
+      # # use log-likelihood to calcu soft label
+      # num_anchors = pred_traj_probs.size(0)  # N
+      # batch_size = checkpoint_label.size(0)  # B
+      # device = checkpoint_label.device
+
+      # anchor_mu = anchor_mu.to(device)
+      # anchor_var = anchor_var.to(device)
+
+      # # 1. Reshape anchor_mu and anchor_var from (N, 20) -> (N, 10, 2)
+      # anchor_mu_reshaped = anchor_mu.view(num_anchors, 10, 2)  # (N, T=10, 2)
+      # anchor_var_reshaped = anchor_var.view(num_anchors, 10, 2)  # (N, T=10, 2)
+
+      # # 2. 扩展维度以支持广播计算
+      # mu = anchor_mu_reshaped.unsqueeze(1)  # (N, 1, 10, 2)，1 表示 batch 维度
+      # var = anchor_var_reshaped.unsqueeze(1)  # (N, 1, 10, 2)
+      # y = checkpoint_label.unsqueeze(0)      # (1, B, 10, 2)
+
+      # # 3. 计算对数似然：log p(y | anchor_i) ~ N(mu_i, diag(var_i))
+      # with torch.no_grad():
+      #     diff = y - mu  # (N, B, 10, 2)，广播自动对齐
+      #     inv_var = 1.0 / (var + 1e-8)  # 防止除零
+
+      #     # 对数概率密度（对角高斯）
+      #     # log p = -0.5 * [log(2πσ²) + (x-μ)²/σ²]
+      #     log_prob = -0.5 * (
+      #         torch.log(2 * torch.pi * var + 1e-8)  # log(2πσ²)
+      #         + (diff ** 2) * inv_var               # (x-μ)^2 / σ²
+      #     )  # (N, B, 10, 2)
+
+      #     # 对时间步 T=10 和坐标维度 2 求和 → (N, B)
+      #     log_likelihood = log_prob.sum(dim=[2, 3])  # sum over T and x/y
+
+      #     # 4. 构造 soft labels using log-likelihood
+      #     scores = log_likelihood / self.config.temperature  # (N, B)
+
+      #     # 数值稳定性：减去每 batch 的最大值
+      #     scores = scores - scores.max(dim=0, keepdim=True)[0]  # (N, B)
+
+      #     # Softmax over anchors (dim=0)
+      #     soft_labels = F.softmax(scores, dim=0)  # (N, B)
+
+      #     # 防止极端值
+      #     soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
       
       kl_loss = F.kl_div(
             torch.log(pred_traj_probs + 1e-8),  # 输入应该是log(prediction)
@@ -527,6 +589,7 @@ class LidarCenterNet(nn.Module):
       loss.update({'loss_weighted_regression': weighted_regression_loss})
 
       # BEST TRAJECTORY LOSS - Supervision for the best trajectory
+      # min_distances, best_indices = torch.min(distances, dim=0)
       min_distances, best_indices = torch.min(distances, dim=0)
       best_pred_trajectories = pred_trajectories[best_indices, torch.arange(batch_size)]
       best_trajectory_loss = F.smooth_l1_loss(best_pred_trajectories, checkpoint_label)
