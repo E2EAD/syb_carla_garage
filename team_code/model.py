@@ -670,7 +670,7 @@ class LidarCenterNet(nn.Module):
       # self._vehicle = CarlaDataProvider.get_hero_actor()
       # self.ss_bev_manager = ObsManager(obs_config, self.config)
       # self.ss_bev_manager.attach_ego_vehicle(self._vehicle, criteria_stop=None)
-
+  
   @torch.no_grad()
   def visualize_model(  # pylint: disable=locally-disabled, unused-argument
       self,
@@ -703,28 +703,30 @@ class LidarCenterNet(nn.Module):
         np.array([16, 133, 133])
     ]
 
-    size_width = int((self.config.max_y - self.config.min_y) * self.config.pixels_per_meter)
-    size_height = int((self.config.max_x - self.config.min_x) * self.config.pixels_per_meter)
+    size_width = int((self.config.max_y - self.config.min_y) * self.config.pixels_per_meter)  # 256
+    size_height = int((self.config.max_x - self.config.min_x) * self.config.pixels_per_meter)  # 256
 
     scale_factor = 4
     origin_x_ratio = self.config.max_x / (
         self.config.max_x -
         self.config.min_x) if self.config.crop_bev and self.config.crop_bev_height_only_from_behind else 1
-    origin = ((size_width * scale_factor) // 2, (origin_x_ratio * size_height * scale_factor) // 2)
-    loc_pixels_per_meter = self.config.pixels_per_meter * scale_factor
+    origin = ((size_width * scale_factor) // 2, (origin_x_ratio * size_height * scale_factor) // 2)  # (512, 512)
+    loc_pixels_per_meter = self.config.pixels_per_meter * scale_factor  # 16
 
     ## add rgb image and lidar
+    # lidar_bev (1, 1, 256, 256)
     if self.config.use_ground_plane:
       images_lidar = np.concatenate(list(lidar_bev.detach().cpu().numpy()[0][:1]), axis=1)
     else:
-      images_lidar = np.concatenate(list(lidar_bev.detach().cpu().numpy()[0][:1]), axis=1)
+      images_lidar = np.concatenate(list(lidar_bev.detach().cpu().numpy()[0][:1]), axis=1)  # (256, 256)
 
-    images_lidar = 255 - (images_lidar * 255).astype(np.uint8)
-    images_lidar = np.stack([images_lidar, images_lidar, images_lidar], axis=-1)
+    images_lidar[:][:][:] = 255
+    # images_lidar = 255 - (images_lidar * 255).astype(np.uint8)
+    images_lidar = np.stack([images_lidar, images_lidar, images_lidar], axis=-1)  # (256, 256, 3)
 
     images_lidar = cv2.resize(images_lidar,
                               dsize=(images_lidar.shape[1] * scale_factor, images_lidar.shape[0] * scale_factor),
-                              interpolation=cv2.INTER_NEAREST)
+                              interpolation=cv2.INTER_NEAREST)  # (1024, 1024, 3)
 
     # Uncomment and comment next block to render ground truth map instead of bev prediction.
     # # Render road over image
@@ -735,12 +737,25 @@ class LidarCenterNet(nn.Module):
     if pred_bev_semantic is not None:
       bev_semantic_indices = np.argmax(pred_bev_semantic[0].detach().cpu().numpy(), axis=0)
       converter = np.array(self.config.bev_classes_list)
-      converter[1][0:3] = 40
+      '''
+      array([[  0,   0,   0], unlabeled
+             [128,  64, 128], road
+             [244,  35, 232], sidewalk
+             [157, 234,  50], roadline
+             [ 50, 234, 157], roadline broken
+             [160, 160,   0], stop sign
+             [  0, 255,   0], light green
+             [255, 255,   0], light yellow
+             [255,   0,   0], light red
+             [  0,   0, 142], vehicle
+             [220,  20,  60]]) pedestrain
+      '''
+      # converter[1][0:3] = 40
       bev_semantic_image = converter[bev_semantic_indices, ...].astype('uint8')
-      alpha = np.ones_like(bev_semantic_indices) * 0.33
+      alpha = np.ones_like(bev_semantic_indices)
       alpha = alpha.astype(np.float32)
       alpha[bev_semantic_indices == 0] = 0.0
-      alpha[bev_semantic_indices == 1] = 0.1
+      alpha[bev_semantic_indices == 1] = 1.0
 
       alpha = cv2.resize(alpha,
                          dsize=(alpha.shape[1] * scale_factor, alpha.shape[0] * scale_factor),
@@ -752,6 +767,8 @@ class LidarCenterNet(nn.Module):
                                       interpolation=cv2.INTER_NEAREST)
 
       images_lidar = bev_semantic_image * alpha + (1 - alpha) * images_lidar
+      # images_lidar = bev_semantic_image * alpha + (1 - alpha) * images_lidar
+      
 
     if gt_bev_semantic is not None:
       bev_semantic_indices = gt_bev_semantic[0].detach().cpu().numpy()
@@ -789,7 +806,7 @@ class LidarCenterNet(nn.Module):
       for wp in gt_checkpoints.detach().cpu().numpy()[0]:
         wp_x = wp[0] * loc_pixels_per_meter + origin[0]  # this is where the minus comes from ^
         wp_y = wp[1] * loc_pixels_per_meter + origin[1]
-        cv2.circle(images_lidar, (int(wp_x), int(wp_y)), radius=8, lineType=cv2.LINE_AA, color=(0, 0, 0), thickness=-1)
+        cv2.circle(images_lidar, (int(wp_x), int(wp_y)), radius=6, lineType=cv2.LINE_AA, color=(0, 0, 0), thickness=-1)
 
     # Green predicted checkpoint
     if pred_checkpoint is not None:
@@ -797,7 +814,7 @@ class LidarCenterNet(nn.Module):
         wp_x = wp[0] * loc_pixels_per_meter + origin[0]
         wp_y = wp[1] * loc_pixels_per_meter + origin[1]
         cv2.circle(images_lidar, (int(wp_x), int(wp_y)),
-                   radius=8,
+                   radius=6,
                    lineType=cv2.LINE_AA,
                    color=(0, 128, 255),
                    thickness=-1)
@@ -811,7 +828,7 @@ class LidarCenterNet(nn.Module):
         wp_x = wp[0] * loc_pixels_per_meter + origin[0]
         wp_y = wp[1] * loc_pixels_per_meter + origin[1]
         cv2.circle(images_lidar, (int(wp_x), int(wp_y)),
-                   radius=8,
+                   radius=6,
                    lineType=cv2.LINE_AA,
                    color=(0, 0, int(color_weight * 255)),
                    thickness=-1)
@@ -820,14 +837,14 @@ class LidarCenterNet(nn.Module):
     if self.config.use_tp:
       x_tp = target_point[0][0] * loc_pixels_per_meter + origin[0]
       y_tp = target_point[0][1] * loc_pixels_per_meter + origin[1]
-      cv2.circle(images_lidar, (int(x_tp), int(y_tp)), radius=12, lineType=cv2.LINE_AA, color=(255, 0, 0), thickness=-1)
+      cv2.circle(images_lidar, (int(x_tp), int(y_tp)), radius=8, lineType=cv2.LINE_AA, color=(255, 0, 0), thickness=-1)
 
       # draw next tp too
       if self.config.two_tp_input and target_point_next is not None:
         x_tpn = target_point_next[0][0] * loc_pixels_per_meter + origin[0]
         y_tpn = target_point_next[0][1] * loc_pixels_per_meter + origin[1]
         cv2.circle(images_lidar, (int(x_tpn), int(y_tpn)),
-                   radius=12,
+                   radius=8,
                    lineType=cv2.LINE_AA,
                    color=(255, 0, 0),
                    thickness=-1)
@@ -861,24 +878,24 @@ class LidarCenterNet(nn.Module):
     images_lidar = np.ascontiguousarray(images_lidar, dtype=np.uint8)
     rgb_image = rgb[0].permute(1, 2, 0).detach().cpu().numpy()
 
-    if wp_selected is not None:
-      colors_name = ['blue', 'yellow']
-      colors_idx = [(0, 0, 255), (255, 255, 0)]
-      cv2.putText(images_lidar, 'Selected: ', (700, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 1, cv2.LINE_AA)
-      cv2.putText(images_lidar, f'{colors_name[wp_selected]}', (850, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
-                  colors_idx[wp_selected], 2, cv2.LINE_AA)
+    # if wp_selected is not None:
+    #   colors_name = ['blue', 'yellow']
+    #   colors_idx = [(0, 0, 255), (255, 255, 0)]
+    #   cv2.putText(images_lidar, 'Selected: ', (700, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0, (0, 0, 0), 1, cv2.LINE_AA)
+    #   cv2.putText(images_lidar, f'{colors_name[wp_selected]}', (850, 30), cv2.FONT_HERSHEY_SIMPLEX, 1.0,
+    #               colors_idx[wp_selected], 2, cv2.LINE_AA)
 
-    if pred_speed is not None:
-      pred_speed = pred_speed.detach().cpu().numpy()[0]
-      t_u.draw_probability_boxes(images_lidar, pred_speed, self.config.target_speeds)
+    # if pred_speed is not None:
+    #   pred_speed = pred_speed.detach().cpu().numpy()[0]
+    #   t_u.draw_probability_boxes(images_lidar, pred_speed, self.config.target_speeds)
 
     if gt_speed is not None:
       gt_speed_float = gt_speed[0].detach().cpu().item()
-      cv2.putText(images_lidar, f'Speed: {gt_speed_float:.2f}', (10, 690), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 1,
+      cv2.putText(images_lidar, f'Speed (m/s): {gt_speed_float:.2f}', (10, 690), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 1,
                   cv2.LINE_AA)
 
     if pred_target_speed_scalar is not None:
-      cv2.putText(images_lidar, f'Pred TS: {pred_target_speed_scalar:.2f}', (10, 660), cv2.FONT_HERSHEY_SIMPLEX, 1,
+      cv2.putText(images_lidar, f'Pred Speed: {pred_target_speed_scalar:.2f}', (10, 660), cv2.FONT_HERSHEY_SIMPLEX, 1,
                   (0, 0, 0), 1, cv2.LINE_AA)
 
     all_images = np.concatenate((rgb_image, images_lidar), axis=0)
@@ -887,6 +904,7 @@ class LidarCenterNet(nn.Module):
     store_path = str(str(save_path) + (f'/{step:04}.png'))
     Path(store_path).parent.mkdir(parents=True, exist_ok=True)
     all_images.save(store_path)
+
 
 
 class GRUWaypointsPredictorInterFuser(nn.Module):

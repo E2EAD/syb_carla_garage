@@ -511,7 +511,7 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
     velocity = gt_velocity.reshape(1, 1)  # used by transfuser
 
     compute_debug_output = self.config.debug and (self.save_path is not None)
-    print(f'/////  Debug mode: {compute_debug_output} (config.debug: {self.config.debug}, save path:{self.save_path}) /////')
+    # print(f'/////  Debug mode: {compute_debug_output} (config.debug: {self.config.debug}, save path:{self.save_path}) /////')
 
     # new checkpoint lookahead: calculate which checkpoint to use for control
     speed = gt_velocity.item()

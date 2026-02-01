@@ -32,14 +32,14 @@ IS_BENCH2DRIVE=True
 BASE_ROUTES=${WORK_DIR}/leaderboard/data/bench2drive_dev10
 TEAM_AGENT=${PROJECT_ROOT}/team_code/my_TFFdeQtd_agent.py
 # TEAM_CONFIG=${PROJECT_ROOT}/log/
-TEAM_CONFIG=/media/dpc/syb_disk_2/garage2_weights/ours-TFFdeQtd_v1.5/syb_TFFdeQtd_0-eb_2stg_v2
+TEAM_CONFIG=/media/dpc/syb_disk_2/garage2_weights/syb_noMoe_wTFdeQtdv15_2stg
 # BASE_CHECKPOINT_ENDPOINT=my_eval_bench2drive220
 BASE_CHECKPOINT_ENDPOINT=my_eval_dev10
 PLANNER_TYPE=my_traj
 ALGO=my_tfpp
 # SAVE_PATH=${WORK_DIR}/visualizaton_result/TFFdeQtd_v15_eb/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
-SAVE_PATH=${WORK_DIR}/visualizaton_result/TFFdeQtd_v15_eb/
-RESULT_PATH=dev10/TFFdeQtd_v15_eb # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'  
+SAVE_PATH=/media/dpc/syb_disk_2/visualizaton_result/noMoe_wTFdeQtdv15_2stg/
+RESULT_PATH=dev10/noMoe_wTFdeQtdv15_2stg # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'  
 
 if [ ! -d "${WORK_DIR}/${RESULT_PATH}" ]; then
     mkdir ${WORK_DIR}/${RESULT_PATH}
