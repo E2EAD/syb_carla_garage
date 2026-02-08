@@ -1240,7 +1240,7 @@ class LidarCenterNet(nn.Module):
     legend_x_left = 30
     legend_y_start = 500  # Start a bit lower to avoid top edge
     line_spacing = 40
-    circle_radius = 6
+    circle_radius = 7
     
     for i, (text, color) in enumerate(legend_items_left):
         y_pos = legend_y_start + i * line_spacing
@@ -1265,7 +1265,7 @@ class LidarCenterNet(nn.Module):
             bottom_right = (legend_x_left + rect_width//2, y_pos + rect_height//2)
             # Draw white background for outline effect
             cv2.rectangle(images_lidar, top_left, bottom_right, 
-                         (255, 255, 255), 2)
+                         (255, 255, 255), 3)
             # Draw colored rectangle
             cv2.rectangle(images_lidar, top_left, bottom_right, 
                          color, 1)
@@ -1291,7 +1291,9 @@ class LidarCenterNet(nn.Module):
             ("Sidewalk", (244, 35, 232)),
             ("Road Line", (157, 234, 50)),
             ("Dash Line", (50, 234, 157)),
+            ("Stop Sign", (160, 160, 0)),
             ("Green Light", (0, 255, 0)),
+            ("Yellow Light", (255, 255, 0)),
             ("Red Light", (255, 0, 0)),
             ("Vehicle", (0, 0, 142)),
             ("Pedestrian", (220, 20, 60))
@@ -1299,17 +1301,17 @@ class LidarCenterNet(nn.Module):
         
         # Draw right legend
         legend_x_right = images_lidar.shape[1] - 250
-        legend_y_start = 500
+        legend_y_start = 460
         
         for i, (text, color) in enumerate(semantic_classes):
-            if i >= 8:  # Only show first 8 classes to avoid clutter
-                break
+            # if i >= 8:  # Only show first 8 classes to avoid clutter
+            #     break
                 
-            y_pos = legend_y_start + i * line_spacing
+            y_pos = legend_y_start + i * int(line_spacing * 0.85)
             
             # Draw colored rectangle for semantic class
-            rect_width = 20
-            rect_height = 12
+            rect_width = 30
+            rect_height = 20
             top_left = (legend_x_right - rect_width//2, y_pos - rect_height//2)
             bottom_right = (legend_x_right + rect_width//2, y_pos + rect_height//2)
             cv2.rectangle(images_lidar, top_left, bottom_right, color, -1)
@@ -1344,14 +1346,23 @@ class LidarCenterNet(nn.Module):
 
     if gt_speed is not None:
       gt_speed_float = gt_speed[0].detach().cpu().item()
-      cv2.putText(images_lidar, f'Speed (m/s): {gt_speed_float:.2f}', (10, 830), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 1,
+      cv2.putText(images_lidar, f'Speed (m/s): {gt_speed_float:.2f}', (10, 740), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 0), 1,
                   cv2.LINE_AA)
 
     if pred_target_speed_scalar is not None:
-      cv2.putText(images_lidar, f'Pred Speed: {pred_target_speed_scalar:.2f}', (10, 800), cv2.FONT_HERSHEY_SIMPLEX, 1,
+      cv2.putText(images_lidar, f'Pred. Speed: {pred_target_speed_scalar:.2f}', (10, 710), cv2.FONT_HERSHEY_SIMPLEX, 1,
                   (0, 0, 0), 1, cv2.LINE_AA)
 
-    all_images = np.concatenate((rgb_image, images_lidar), axis=0)
+    # 在拼接前截取images_lidar的前860行
+    crop_x = 790
+    if images_lidar.shape[0] > crop_x:
+        images_lidar_cropped = images_lidar[:crop_x, :]  
+    else:
+        images_lidar_cropped = images_lidar
+    
+    # print(images_lidar.shape, images_lidar_cropped.shape)
+
+    all_images = np.concatenate((rgb_image, images_lidar_cropped), axis=0)
     all_images = Image.fromarray(all_images.astype(np.uint8))
 
     store_path = str(str(save_path) + (f'/{step:04}.png'))

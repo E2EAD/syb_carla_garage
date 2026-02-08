@@ -536,7 +536,7 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
           ego_vel=velocity,
           command=tick_data['command'])
 
-        print_data_info(pred_checkpoint)  # (1,10,2)
+        # print_data_info(pred_checkpoint)  # (1,10,2)
         # Only convert bounding boxes when they are used.
         if self.config.detect_boxes and (compute_debug_output or self.config.backbone in ('aim') or
                                          self.stop_sign_controller):
