@@ -591,11 +591,7 @@ class LidarCenterNet(nn.Module):
             reduction='batchmean',
             log_target=False  # 明确指定target不是log形式
             )
-<<<<<<< HEAD
-      loss.update({'loss_kl_div': kl_loss})
-=======
       loss.update({'loss_traj_kl_div': kl_loss})
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
       # WEIGHTED REGRESSION LOSS - Use ALL trajectories weighted by their probabilities
       # Expand checkpoint_label to match pred_trajectories shape

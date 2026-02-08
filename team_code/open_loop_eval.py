@@ -1,9 +1,5 @@
 """
-<<<<<<< HEAD
-Open-loop evaluation script for BEV Sem, trajectory and speed prediction models.
-=======
 Open-loop evaluation script for trajectory and speed prediction models.
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 Usage:
 python open_loop_eval.py --logdir /path/to/model_folder --data_root /path/to/dataset --output_dir /path/to/results
 i.e. :
@@ -15,10 +11,7 @@ python ./team_code/open_loop_eval.py --logdir ./log/syb_train_noMoe_4-gw --data_
       "unlabeled",
       "road",
       "sidewalk",
-<<<<<<< HEAD
-=======
       "lane_markers",
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
       "lane_markers broken",
       "stop_signs",
       "traffic_light_green",
@@ -48,12 +41,9 @@ from collections import defaultdict
 import pandas as pd
 from scipy.spatial.distance import cdist
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, f1_score
-<<<<<<< HEAD
-=======
 import time
 import psutil
 import GPUtil
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 
 # import sys
@@ -63,11 +53,7 @@ import GPUtil
 # parent_dir = os.path.dirname(current_dir)
 # sys.path.insert(0, parent_dir)
 # Import your model and data classes
-<<<<<<< HEAD
-from model import LidarCenterNet
-=======
 from my_model_wTFde import LidarCenterNet
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
 import transfuser_utils as t_u
@@ -207,11 +193,7 @@ class BEV_mIoU:
 class OpenLoopEvaluator:
     """Evaluator for open-loop trajectory and speed prediction"""
     
-<<<<<<< HEAD
-    def __init__(self, config, model_path, data_root, output_dir, device='cuda:0', seed=0):
-=======
     def __init__(self, config, model_path, data_root, output_dir, device='cuda:0', seed=42):
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         self.config = config
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.output_dir = Path(output_dir)
@@ -273,14 +255,11 @@ class OpenLoopEvaluator:
         # Add to metrics storage
         self.metrics['bev_semantic'] = defaultdict(list)
 
-<<<<<<< HEAD
-=======
         # 性能监控相关
         self.inference_times = []  # 存储每个batch的推理时间
         self.memory_usages = []    # 存储每个batch的显存使用
         self.cpu_usages = []       # 存储CPU使用率
 
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
     def set_random_seed(self, seed):
         """设置所有相关的随机种子"""
         random.seed(seed)
@@ -409,8 +388,6 @@ class OpenLoopEvaluator:
         bev_gt = None
         if 'bev_semantic' in data:
             bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
-<<<<<<< HEAD
-=======
 
         # 记录处理前的显存使用
         torch.cuda.synchronize() if torch.cuda.is_available() else None
@@ -420,7 +397,6 @@ class OpenLoopEvaluator:
         if torch.cuda.is_available():
             start_memory = torch.cuda.memory_allocated(self.device) / 1024**2  # MB
             start_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2  # MB
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         
         # Model forward pass
         pred_wp, pred_target_speed, pred_checkpoint, _, pred_bev_semantic, _, _, _, _, _ = self.model(
@@ -430,8 +406,6 @@ class OpenLoopEvaluator:
             ego_vel=ego_vel,
             command=command
         )
-<<<<<<< HEAD
-=======
 
         # 同步并记录时间
         torch.cuda.synchronize() if torch.cuda.is_available() else None
@@ -470,7 +444,6 @@ class OpenLoopEvaluator:
         self.inference_times.append(inference_time)
         self.memory_usages.append(memory_info)
         self.cpu_usages.append(cpu_percent)
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         
         # Convert predictions
         # print(f'pred_target_speed shape: {pred_target_speed.shape}')
@@ -784,8 +757,6 @@ class OpenLoopEvaluator:
             for i, iou in enumerate(bev_results['IoU_per_class']):
                 if not np.isnan(iou) and iou>0:
                     print(f"  Class {i}: {iou:.4f}")
-<<<<<<< HEAD
-=======
 
         # 添加性能指标
         print("\n--- Performance Metrics ---")
@@ -819,7 +790,6 @@ class OpenLoopEvaluator:
                 print(f"  Allocated Peak (max): {stats['allocated_peak_max']:.1f} MB")
                 print(f"  Reserved Peak (mean): {stats['reserved_peak_mean']:.1f} MB")
                 print(f"  Reserved Peak (max): {stats['reserved_peak_max']:.1f} MB")
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
     
     def save_results(self):
         """Save evaluation results to files"""
@@ -880,8 +850,6 @@ class OpenLoopEvaluator:
             json.dump(serializable_metrics, f, indent=2)
         
         print(f"\nMetrics saved to: {metrics_file}")
-<<<<<<< HEAD
-=======
 
     def analyze_computing_performance(self):
         """分析并汇总性能指标"""
@@ -942,7 +910,6 @@ class OpenLoopEvaluator:
                 print(f"Warning: Could not get GPU info: {e}")
         
         return performance_stats
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
     
     def visualize_results(self):
         """Generate visualization plots"""

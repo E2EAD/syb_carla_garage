@@ -611,22 +611,14 @@ def main():
       config.detailed_loss_weights[k] = config.detailed_loss_weights[k] * factor
 
   # Data, configures config. Create before the model
-<<<<<<< HEAD
-  train_set = Ability_CARLA_Data(root=config.dataset_root,
-=======
   train_set = Ability_CARLA_Data(root=config.mini_dataset_root,
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
                          config=config,
                          estimate_class_distributions=config.estimate_class_distributions,
                          estimate_sem_distribution=config.estimate_semantic_distribution,
                          shared_dict=shared_dict,
                          rank=rank,
                          validation=False,
-<<<<<<< HEAD
-                         ability=config.selected_ability)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
-=======
                          ability_list=config.selected_ability_list)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
   if args.setting != 'all':
     val_set = Ability_CARLA_Data(root=config.dataset_root, config=config, shared_dict=shared_dict, rank=rank, validation=True, ability=config.selected_ability)

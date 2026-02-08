@@ -21,14 +21,9 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 import json
 
-<<<<<<< HEAD
-from utils import print_data_info
-from my_query_traj_decoder import PlanningTrajectoryDecoder
-=======
 from utils import print_data_info, soft_label_to_hard_label
 from my_query_traj_decoder import PlanningTrajectoryDecoder
 from task_encoder_v2 import TaskEncoder
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 from task_encoder_v3 import TransformerTaskEncoder
 
 
@@ -62,20 +57,12 @@ class LidarCenterNet(nn.Module):
 
     # 新增 Task Encoder
     if self.config.use_task_encoder:  # 需要在config中添加这个参数
-<<<<<<< HEAD
-        self.task_encoder = TransformerTaskEncoder(self.config,
-            #input_dim=11 * 256,  # joined_checkpoint_features 展平后的维度
-            #hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
-            #latent_dim=20  # 20维 latent (10个waypoints)
-        )
-=======
         # self.task_encoder = TaskEncoder(self.config,
         #     input_dim=11 * 256,  # joined_checkpoint_features 展平后的维度
         #     hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
         #     latent_dim=20  # 20维 latent (10个waypoints)
         # )
         self.task_encoder = TransformerTaskEncoder(self.config)
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         # 加载anchor信息来初始化特征锚点
         anchor_mu, anchor_var, cluster_ids = self.task_encoder.load_anchor_mu_and_var()
         num_anchors = anchor_mu.size(0)
@@ -446,21 +433,12 @@ class LidarCenterNet(nn.Module):
             # 计算每个样本最可能对应的原型索引
             best_indices = torch.argmax(pred_traj_probs, dim=0)  # (batch_size,)
             
-<<<<<<< HEAD
-            # 调用TaskEncoder，传入必要的参数 Now it's testing so no need for the last 3 stuff.
-            task_encoder_output = self.task_encoder(
-                flattened_features, 
-                # prototype_probs=pred_traj_probs.transpose(0,1),  # 转为(batch_size, num_anchors)
-                # update_anchors=True,  # 训练时更新锚点，验证时不更新
-                # prototype_labels=best_indices
-=======
             # 调用TaskEncoder，传入必要的参数
             task_encoder_output = self.task_encoder(
                 flattened_features, 
                 prototype_probs=pred_traj_probs.transpose(0,1),  # 转为(batch_size, num_anchors)
                 update_anchors=True,  # 训练时更新锚点，验证时不更新
                 prototype_labels=best_indices
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
             )
             
             task_latent_mu = task_encoder_output['mu']

@@ -2,10 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
-<<<<<<< HEAD
-=======
 import json
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 
 class TaskEncoder(nn.Module):
@@ -15,16 +12,9 @@ class TaskEncoder(nn.Module):
     forces alignment with trajectory anchors, and reconstructs input features.
     """
     
-<<<<<<< HEAD
-    def __init__(self, input_dim=11*256, hidden_dims=[11*256*2, 11*256, 11*256/2, 1024, 512, 256], latent_dim=20):
-        super().__init__()
-        
-=======
     def __init__(self, config, input_dim=11*256, hidden_dims=[1024, 1024, 1024, 1024], latent_dim=20):
         super().__init__()
         self.config = config
-
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         
@@ -217,8 +207,6 @@ class TaskEncoder(nn.Module):
             return mu
         else:
             return self.reparameterize(mu, log_var)
-<<<<<<< HEAD
-=======
         
     def sample_feat_and_traj(self, sample_num = 2):
         """
@@ -283,7 +271,6 @@ class TaskEncoder(nn.Module):
         
         print(f'Read anchors mu and var from {self.config.prior_traj_path} for sampling')
         return anchors_mu, anchor_var
->>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 
 # class TaskEncoderConfig:
