@@ -77,7 +77,11 @@ class PlanningTrajectoryDecoder(nn.Module):
         )
         
         # 路由温度参数（控制选择的锐利度）
+<<<<<<< HEAD
         #self.routing_temperature = nn.Parameter(torch.tensor(1.0))
+=======
+        # self.routing_temperature = nn.Parameter(torch.tensor(1.0))
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         
         self._init_weights()
     
@@ -125,7 +129,11 @@ class PlanningTrajectoryDecoder(nn.Module):
                     nn.init.zeros_(m.bias)
         
         # 路由温度初始化
+<<<<<<< HEAD
         #nn.init.constant_(self.routing_temperature, 1.0)
+=======
+        # nn.init.constant_(self.routing_temperature, 1.0)
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
     def forward(self, encoder_out):
         """

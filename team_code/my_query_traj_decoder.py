@@ -13,12 +13,12 @@ class PlanningTrajectoryDecoder(nn.Module):
     - encoder_out: (batch_size, seq_len, dim) - BEV feature embeddings from encoder
     
     Output Shapes (predict method):
-    - selected_trajectories: (batch_size, 20) - [x1,y1,x2,y2,...,x6,y6] coordinates
+    - selected_trajectories: (batch_size, 20) - [x1,y1,x2,y2,...,x10,y10] coordinates
     - all_trajectories: (num_anchors, batch_size, 20) - All predicted trajectories
     - scores: (num_anchors, batch_size) - Confidence scores for each trajectory
     
     Note: 
-    - Each trajectory represents 6 future waypoints (0.5s, 1.0s, ..., 3.0s)
+    - Each trajectory represents 10 future waypoints 
     - Coordinates are in ego-vehicle frame (meters)
     """
     
@@ -80,33 +80,8 @@ class PlanningTrajectoryDecoder(nn.Module):
         Goal anchor-based methods focus on predicting a set of feasible goal points that serve as anchors for trajectory generation. [[5]]
         """
         if anchor_path == None:
-            print('no anchor path, generate default anchors.')
-            anchors = []
-            t = np.linspace(0, 2.5, 10)  # Time points: 0.25s, 0.5s, ..., 2.5s
-            
-            # 1. Straight trajectories (different speeds)
-            for speed in [3.0, 5.0, 7.0]:
-                x = t * speed
-                y = np.zeros_like(t)
-                anchors.append(np.stack([x, y], axis=1).flatten())
-            
-            # 2. Left turn trajectories (different curvatures)
-            for curve in [0.5, 1.0, 1.5]:
-                x = t * 5.0
-                y = curve * (t ** 2) / 2
-                anchors.append(np.stack([x, y], axis=1).flatten())
-            
-            # 3. Right turn trajectories (different curvatures)
-            for curve in [0.5, 1.0, 1.5]:
-                x = t * 5.0
-                y = -curve * (t ** 2) / 2
-                anchors.append(np.stack([x, y], axis=1).flatten())
-            
-            # Register as buffer (not trainable parameters)
-            self.register_buffer('anchors', torch.tensor(anchors, dtype=torch.float32))
-            print(f'anchors shape: {torch.tensor(anchors, dtype=torch.float32).shape}')  # (9,20)
-            print(f"Created {len(anchors)} anchor trajectories")
-            self.num_anchors = len(anchors)
+            print('no anchor path, return.')
+            return
         else:
             with open(anchor_path, 'r') as f:
                 data = json.load(f)

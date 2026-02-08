@@ -1,3 +1,8 @@
+<<<<<<< HEAD
+=======
+# -*- coding: utf-8 -*-
+
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 '''
 Training script for training transFuser and related models.
 Usage:
@@ -30,7 +35,11 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
+<<<<<<< HEAD
 from my_model_moe_v2 import LidarCenterNet
+=======
+from my_model_moe_v28 import LidarCenterNet
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -193,10 +202,17 @@ def load_hybrid_model_checkpoint(model, checkpoint_path, device, skip_anchors=Tr
     decoder_prefixes = ['query_traj_decoder']
     
     for key, value in checkpoint_state_dict.items():
+<<<<<<< HEAD
         # # 1. 首先跳过需要跳过的参数
         # if skip_anchors and (key.endswith('.anchors') or 'anchors' in key):
         #     print(f"⏭️ 跳过anchor参数: {key}")
         #     continue
+=======
+        # 1. 首先跳过需要跳过的参数
+        if skip_anchors and (key.endswith('.anchors') or 'anchors' in key):
+            print(f"⏭️ 跳过anchor参数: {key}")
+            continue
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         
         # 2. 判断是否属于解码器
         is_decoder_param = any(key.startswith(prefix) or f'.{prefix}.' in key for prefix in decoder_prefixes)
@@ -873,7 +889,11 @@ def main():
                          shared_dict=shared_dict,
                          rank=rank,
                          validation=False,
+<<<<<<< HEAD
                          ability=config.selected_ability)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+=======
+                         ability_list=config.selected_ability_list)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
   if args.setting != 'all':
     val_set = Ability_CARLA_Data(root=config.dataset_root, config=config, shared_dict=shared_dict, rank=rank, validation=True, ability=config.selected_ability)
@@ -1235,7 +1255,11 @@ class Engine(object):
       pred_wp,\
       pred_target_speed,\
       pred_trajectories, \
+<<<<<<< HEAD
       pred_traj_probs, \
+=======
+      pred_traj_logits, pred_traj_probs, \
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
       pred_semantic, \
       pred_bev_semantic, \
       pred_depth, \
@@ -1266,6 +1290,10 @@ class Engine(object):
       losses = compute_loss(pred_wp=pred_wp,
                             pred_target_speed=pred_target_speed,
                             pred_trajectories = pred_trajectories, 
+<<<<<<< HEAD
+=======
+                            pred_traj_logits = pred_traj_logits,
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
                             pred_traj_probs = pred_traj_probs,
                             pred_semantic=pred_semantic,
                             pred_bev_semantic=pred_bev_semantic,

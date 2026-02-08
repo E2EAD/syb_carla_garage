@@ -191,7 +191,7 @@ def visualize_all_waypoints(date_dir, output_dir=None):
                 var = np.array(component['var'])
                 
                 # Extract x and y coordinates
-                end_point = 2*9
+                end_point = 2*8  # only plot 8 waypoints or 10 checkpoints
                 x_coords = mu[0:end_point:2]  # x coordinates
                 y_coords = mu[1:end_point:2]  # y coordinates
                 x_var = var[0:end_point:2]    # x variances

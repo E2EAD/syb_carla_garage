@@ -21,7 +21,11 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 import json
 
+<<<<<<< HEAD
 from utils import print_data_info
+=======
+from utils import print_data_info, soft_label_to_hard_label
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 from my_query_traj_decoder import PlanningTrajectoryDecoder
 # from task_encoder_v2 import TaskEncoder
 from task_encoder_v3 import TransformerTaskEncoder
@@ -424,7 +428,11 @@ class LidarCenterNet(nn.Module):
             pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
             # print_data_info(pred_target_speed)  # torch.Size([2, 8])
 
+<<<<<<< HEAD
         if self.config.use_controller_input_prediction and self.config.sample_from_vae:  # when it's for test, no need sample and this part could be #
+=======
+        if self.config.use_controller_input_prediction and self.config.sample_from_vae:
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
           sample_checkpoint_label = None
           sample_pred_trajectories = None
           sample_pred_traj_probs = None

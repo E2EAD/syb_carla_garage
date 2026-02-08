@@ -204,11 +204,14 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
 
     # Path to where visualizations and other debug output gets stored
     self.save_path = os.environ.get('SAVE_PATH', None)
+<<<<<<< HEAD
     # self.save_path = './visualizaton_result/TFFdeQtd_v15_eb/'
     if route_index is not None:
         route_index = str(route_index)  # 转换为字符串
     print(f'///// save path: {self.save_path} /////')
     print(f'/////route_index {route_index} /////')
+=======
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
     # Logger that generates logs used for infraction replay in the results_parser.
     if self.save_path is not None and route_index is not None:
@@ -226,8 +229,11 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
     else:
       self.save_path = None
 
+<<<<<<< HEAD
     # print(f'save path flag 2: {self.save_path}')
 
+=======
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
     self.metric_info = {}
 
     print('my sensor agent finish setup.')
@@ -511,7 +517,10 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
     velocity = gt_velocity.reshape(1, 1)  # used by transfuser
 
     compute_debug_output = self.config.debug and (self.save_path is not None)
+<<<<<<< HEAD
     # print(f'/////  Debug mode: {compute_debug_output} (config.debug: {self.config.debug}, save path:{self.save_path}) /////')
+=======
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
     # new checkpoint lookahead: calculate which checkpoint to use for control
     speed = gt_velocity.item()
@@ -602,11 +611,19 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
       self.pred_wp = torch.stack(pred_wps, dim=0).mean(dim=0)
 
     # calculate target speed scalar from model predictions
+<<<<<<< HEAD
     if self.config.use_controller_input_prediction:  # 1
       pred_target_speed_ensemble = torch.stack(pred_target_speeds,
                                                dim=0).mean(dim=0)  # average across ensemble models' prediction
 
       if self.uncertainty_weight:  # 1
+=======
+    if self.config.use_controller_input_prediction:
+      pred_target_speed_ensemble = torch.stack(pred_target_speeds,
+                                               dim=0).mean(dim=0)  # average across ensemble models' prediction
+
+      if self.uncertainty_weight:
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         uncertainty = pred_target_speed_ensemble.detach().cpu().numpy()
         if uncertainty[0] > self.config.brake_uncertainty_threshold:
           pred_target_speed_scalar = self.inference_target_speeds[0]
@@ -618,6 +635,7 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
 
     # Visualize the output of the last model
     if compute_debug_output:
+<<<<<<< HEAD
 
       # 使用集成平均的速度预测
       if self.config.use_controller_input_prediction:
@@ -638,6 +656,12 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
       #   prob_target_speed = F.softmax(pred_target_speed, dim=1)
       # else:
       #   prob_target_speed = pred_target_speed
+=======
+      if self.config.use_controller_input_prediction:
+        prob_target_speed = F.softmax(pred_target_speed, dim=1)
+      else:
+        prob_target_speed = pred_target_speed
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
       self.nets[0].visualize_model(
           self.save_path,
@@ -650,8 +674,13 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
           pred_semantic=pred_semantic,
           pred_bev_semantic=pred_bev_semantic,
           pred_depth=pred_depth,
+<<<<<<< HEAD
           pred_checkpoint=viz_checkpoint,  # pred_checkpoint
           pred_speed=viz_prob_target_speed,  # prob_target_speed,
+=======
+          pred_checkpoint=pred_checkpoint,
+          pred_speed=prob_target_speed,
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
           pred_target_speed_scalar=pred_target_speed_scalar,
           pred_bb=bbs_vehicle_coordinate_system,
           gt_speed=gt_velocity,

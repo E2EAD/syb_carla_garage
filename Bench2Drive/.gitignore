@@ -10,6 +10,7 @@ __pycache__/
 *.ckpt
 *.xml
 *.json
+*.csv
 
 # OS & editor files
 .DS_Store

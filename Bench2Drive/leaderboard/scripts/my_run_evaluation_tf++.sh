@@ -29,13 +29,22 @@ BASE_PORT=30000
 BASE_TM_PORT=50000
 IS_BENCH2DRIVE=True
 BASE_ROUTES=${WORK_DIR}/leaderboard/data/bench2drive220
+<<<<<<< HEAD
 TEAM_AGENT=${PROJECT_ROOT}/team_code/my_moe_agent.py
 TEAM_CONFIG=${PROJECT_ROOT}/log/syb_tfpp_moe-lh_stg2
+=======
+TEAM_AGENT=${PROJECT_ROOT}/team_code/my_sensor_agent.py
+TEAM_CONFIG=${PROJECT_ROOT}/log/syb_train_2-ot_2stg
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 BASE_CHECKPOINT_ENDPOINT=my_eval_bench2drive220
 PLANNER_TYPE=my_traj
 ALGO=my_tfpp
 SAVE_PATH=${WORK_DIR}/leaderboard/data/results/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
+<<<<<<< HEAD
 RESULT_PATH=moe_multiTask_27epoch  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+=======
+RESULT_PATH=ns-gw-ot  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 if [ ! -d "${RESULT_PATH}" ]; then
     mkdir ${RESULT_PATH}

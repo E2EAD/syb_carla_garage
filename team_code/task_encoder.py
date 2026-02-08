@@ -2,6 +2,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+<<<<<<< HEAD
+=======
+import json
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 
 class TaskEncoder(nn.Module):
@@ -11,9 +15,16 @@ class TaskEncoder(nn.Module):
     forces alignment with trajectory anchors, and reconstructs input features.
     """
     
+<<<<<<< HEAD
     def __init__(self, input_dim=11*256, hidden_dims=[11*256*2, 11*256, 11*256/2, 1024, 512, 256], latent_dim=20):
         super().__init__()
         
+=======
+    def __init__(self, config, input_dim=11*256, hidden_dims=[1024, 1024, 1024, 1024], latent_dim=20):
+        super().__init__()
+        self.config = config
+
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         self.input_dim = input_dim
         self.latent_dim = latent_dim
         
@@ -206,6 +217,73 @@ class TaskEncoder(nn.Module):
             return mu
         else:
             return self.reparameterize(mu, log_var)
+<<<<<<< HEAD
+=======
+        
+    def sample_feat_and_traj(self, sample_num = 2):
+        """
+        Sample features and trajectories from the VAE using anchor distributions.
+        
+        Steps:
+        1. Sample anchors and use their mu as trajectory labels
+        2. Reparameterize to get latent z using anchor mu and var  
+        3. Decode z to get joined_checkpoint_features
+        
+        Returns:
+            sample_checkpoint_label: Sampled trajectories (sample_num, 10, 2)
+            sample_joined_checkpoint_features: Reconstructed features (sample_num, 11, 256)
+        """
+        # Load anchors if not already loaded
+        if not hasattr(self, 'anchors_mu') or not hasattr(self, 'anchor_var'):
+            # print('to load the anchor for sampling.')
+            self.anchors_mu, self.anchor_var = self.load_anchor_mu_and_var()
+            # Move anchors to model's device if not already done
+            if self.anchors_mu.device != next(self.parameters()).device:
+                device = next(self.parameters()).device
+                self.anchors_mu = self.anchors_mu.to(device)
+                self.anchor_var = self.anchor_var.to(device)
+        
+        num_anchors = self.anchors_mu.size(0)
+        
+        # 1. Randomly sample anchor indices
+        anchor_indices = torch.randint(0, num_anchors, (sample_num,))
+        
+        # Get the mu and var for selected anchors
+        selected_mu = self.anchors_mu[anchor_indices]  # (sample_num, 20)
+        selected_var = self.anchor_var[anchor_indices]  # (sample_num, 20)
+        
+        # 2. Reparameterize to get latent z using anchor distribution
+        # Convert variance to log_var for reparameterization
+        selected_log_var = torch.log(selected_var + 1e-8)
+        z = self.reparameterize(selected_mu, selected_log_var)  # (sample_num, 20)
+        
+        # 3. Decode latent z to get reconstructed features
+        reconstructed_features = self.decode(z)  # (sample_num, 11*256)
+        
+        # Reshape to match expected format
+        sample_joined_checkpoint_features = reconstructed_features.reshape(sample_num, 11, 256)
+        
+        # Reshape trajectory from (sample_num, 20) to (sample_num, 10, 2)
+        sample_checkpoint_label = selected_mu.reshape(sample_num, 10, 2)
+        return sample_joined_checkpoint_features.detach(), sample_checkpoint_label.detach()  # return detached samples to avoid grad backward
+    
+    def load_anchor_mu_and_var(self):
+        """从JSON文件加载anchor的均值和方差"""
+        with open(self.config.prior_traj_path, 'r') as f:
+            data = json.load(f)
+
+        # Extract first 20 elements (x,y for 10 waypoints) from each cluster's 'mu'
+        mu_list = [entry['mu'][:20] for entry in data]
+        anchors_mu = torch.tensor(mu_list, dtype=torch.float32)
+        var_list = [entry['var'][:20] for entry in data]
+        anchor_var = torch.tensor(var_list, dtype=torch.float32)
+
+        self.num_anchors = len(mu_list)
+        print(f'got {self.num_anchors} anchors.')
+        
+        print(f'Read anchors mu and var from {self.config.prior_traj_path} for sampling')
+        return anchors_mu, anchor_var
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 
 # class TaskEncoderConfig:

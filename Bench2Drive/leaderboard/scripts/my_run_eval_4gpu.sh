@@ -35,12 +35,20 @@ BASE_ROUTES=${WORK_DIR}/leaderboard/data/bench2drive220
 TEAM_AGENT=${PROJECT_ROOT}/team_code/my_sensor_agent.py  
 # Must set YOUR_CKPT_PATH
 # TEAM_CONFIG=/mnt/lustre/work/geiger/bjaeger25/garage_2_cleanup/team_code/checkpoints/tfpp_009_ensemble_0_1_2
+<<<<<<< HEAD
 TEAM_CONFIG=${PROJECT_ROOT}/log/syb_train_1-gw_2stg 
+=======
+TEAM_CONFIG=${PROJECT_ROOT}/log/syb_train_0-ns_2stg
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 BASE_CHECKPOINT_ENDPOINT=eval_bench2drive220
 PLANNER_TYPE=traj
 ALGO=tfpp
 SAVE_PATH=${WORK_DIR}/leaderboard/data/results/eval_bench2drive220_${ALGO}_${PLANNER_TYPE}
+<<<<<<< HEAD
 RESULT_PATH=ns-gw  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+=======
+RESULT_PATH=ns  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
 if [ ! -d "${RESULT_PATH}" ]; then
     mkdir ${RESULT_PATH}

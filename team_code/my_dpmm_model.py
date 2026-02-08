@@ -22,7 +22,7 @@ class BNPModel:
     def __init__(self, 
                  save_dir, 
                  gamma0=5.0, 
-                 num_lap=100,
+                 num_lap=1000,
                  sF=0.00001,
                  birth_kwargs=None, 
                  merge_kwargs=None):
@@ -73,8 +73,9 @@ class BNPModel:
             # m_pair_ranking_direction='descending',
         )
 
-        self.comp_mu = None
-        self.comp_var = None
+        self.comp_mu = [torch.zeros(11*256, dtype=torch.float32)]
+
+        self.comp_var = [torch.ones(11*256, dtype=torch.float32)]
 
         # New attributes for tracking clusters
         self.cluster_history = []  # List of all clusters ever created
@@ -217,7 +218,7 @@ class BNPModel:
         new_current_clusters = {}
         used_old_ids = set()
         assigned_new_idxs = set()
-        kl_threshold = 5.0  # Adjust based on your data scale
+        kl_threshold = 10.0  # Adjust based on your data scale
         
         for kl, new_idx, old_id in matches:
             # Skip if already assigned or KL too high
@@ -581,6 +582,19 @@ class BNPModel:
             except Exception as e:
                 print(f"Error loading bnpy model: {e}")
                 self.model = None
+
+        # load comp_mu/var
+        if self.components != []:
+            print('constructing self.comp_mu/var.')
+            self.comp_mu = [
+                torch.tensor(comp['mu'], dtype=torch.float32)
+                for comp in self.components
+            ]
+
+            self.comp_var = [
+                torch.tensor(comp['var'], dtype=torch.float32)
+                for comp in self.components
+            ]
 
         print(f'dpmm loaded from {load_path}.')
     

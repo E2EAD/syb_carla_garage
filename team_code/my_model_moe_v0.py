@@ -21,7 +21,11 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 import json
 
+<<<<<<< HEAD
 from utils import print_data_info
+=======
+from utils import print_data_info, soft_label_to_hard_label
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 from my_query_traj_decoder import PlanningTrajectoryDecoder
 from task_encoder import TaskEncoder
 
@@ -56,7 +60,11 @@ class LidarCenterNet(nn.Module):
 
     # 新增 Task Encoder
     if self.config.use_task_encoder:  # 需要在config中添加这个参数
+<<<<<<< HEAD
         self.task_encoder = TaskEncoder(
+=======
+        self.task_encoder = TaskEncoder(self.config,
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
             input_dim=11 * 256,  # joined_checkpoint_features 展平后的维度
             hidden_dims=self.config.task_encoder_hidden_dims,  # 例如 [1024, 512, 256]
             latent_dim=20  # 20维 latent (10个waypoints)
@@ -536,7 +544,12 @@ class LidarCenterNet(nn.Module):
           batch_size = distances.size(1)
           
           # 添加距离裁剪，避免极端值
+<<<<<<< HEAD
           distances = torch.clamp(distances, min=1e-6, max=100.0)
+=======
+          distances = torch.clamp(distances, min=1e-6, max=1000.0)
+          # print(f'distances: {distances}')
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
       # 3. 创建软标签（修复数值稳定性）
       with torch.no_grad():
@@ -548,6 +561,12 @@ class LidarCenterNet(nn.Module):
           
           # 确保概率分布有效
           soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+<<<<<<< HEAD
+=======
+          # print(f'soft_labels: {soft_labels}')
+
+      # hard_labels = soft_label_to_hard_label(soft_labels.detach())
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
       
       kl_loss = F.kl_div(
             torch.log(pred_traj_probs + 1e-8),  # 输入应该是log(prediction)

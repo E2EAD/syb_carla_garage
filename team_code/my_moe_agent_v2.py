@@ -575,6 +575,7 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
       bounding_boxes.append(pred_bounding_box)
 
     # Average the predictions from ensembles
+<<<<<<< HEAD
     if self.config.detect_boxes and (compute_debug_output or self.config.backbone in ('aim') or
                                      self.stop_sign_controller):
       # We average bounding boxes by using non-maximum suppression on the set of all detected boxes.
@@ -584,6 +585,17 @@ class SensorAgent(autonomous_agent.AutonomousAgent):
     else:
       bbs_vehicle_coordinate_system = None
     # bbs_vehicle_coordinate_system = None
+=======
+    # if self.config.detect_boxes and (compute_debug_output or self.config.backbone in ('aim') or
+    #                                  self.stop_sign_controller):
+    #   # We average bounding boxes by using non-maximum suppression on the set of all detected boxes.
+    #   bbs_vehicle_coordinate_system = t_u.non_maximum_suppression(bounding_boxes, self.config.iou_treshold_nms)
+
+    #   self.bb_buffer.append(bbs_vehicle_coordinate_system)
+    # else:
+    #   bbs_vehicle_coordinate_system = None
+    bbs_vehicle_coordinate_system = None
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
 
     if self.stop_sign_controller:
       stop_for_stop_sign = self.stop_sign_controller_step(gt_velocity.item())

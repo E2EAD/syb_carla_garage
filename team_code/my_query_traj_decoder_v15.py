@@ -21,7 +21,11 @@ class PlanningTrajectoryDecoder(nn.Module):
     - Coordinates are in ego-vehicle frame (meters)
     """
     
+<<<<<<< HEAD
     def __init__(self, cfg: GlobalConfig, num_anchors=53):
+=======
+    def __init__(self, cfg: GlobalConfig):
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         """
         Args:
             cfg: Configuration object containing model parameters
@@ -29,7 +33,10 @@ class PlanningTrajectoryDecoder(nn.Module):
         """
         super().__init__()
         self.cfg = cfg
+<<<<<<< HEAD
         self.num_anchors = num_anchors
+=======
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
         
         # Create diverse trajectory anchors (num_anchors, 20)
         self._create_anchors(cfg.prior_traj_path)

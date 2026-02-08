@@ -644,3 +644,24 @@ def combine_skill_dataloaders(skill_dataloaders):  # return a skill_dataloaders 
         )
         combined_skill_dataloaders[skill] = combined_dataloader
     return combined_skill_dataloaders
+
+def soft_label_to_hard_label(soft_label):
+    """
+    将soft_label转换为hard_label
+    Args:
+        soft_label: 形状为 (num_anchor, batch_size) 的张量
+    Returns:
+        hard_label: 形状为 (num_anchor, batch_size) 的张量，每列最大值为1，其他为0
+    """
+    # 沿着num_anchor维度找到最大值的索引
+    max_indices = torch.argmax(soft_label, dim=0)  # 形状: (batch_size,)
+    
+    # 创建全零的张量
+    hard_label = torch.zeros_like(soft_label)
+    
+    # 将每列最大值的位置设置为1
+    batch_size = soft_label.size(1)
+    for batch_idx in range(batch_size):
+        hard_label[max_indices[batch_idx], batch_idx] = 1
+    
+    return hard_label

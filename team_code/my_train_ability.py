@@ -551,7 +551,11 @@ def main():
       config.detailed_loss_weights[k] = config.detailed_loss_weights[k] * factor
 
   # Data, configures config. Create before the model
+<<<<<<< HEAD
   train_set = Ability_CARLA_Data(root=config.dataset_root,
+=======
+  train_set = Ability_CARLA_Data(root=config.mini_dataset_root,
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
                          config=config,
                          estimate_class_distributions=config.estimate_class_distributions,
                          estimate_sem_distribution=config.estimate_semantic_distribution,
@@ -860,7 +864,11 @@ class Engine(object):
 
     ego_vel = data['speed'].to(self.device, dtype=torch.float32).unsqueeze(1)
 
+<<<<<<< HEAD
     if self.config.use_twohot_target_speeds:
+=======
+    if self.config.use_twohot_target_speeds:  # 1
+>>>>>>> 292b63d6ceceb7e250022de6871d308bc00b4f72
       target_speed = data['target_speed_twohot'].to(self.device, dtype=torch.float32)
     else:
       target_speed = data['target_speed'].to(self.device, dtype=torch.long)

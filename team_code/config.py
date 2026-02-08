@@ -488,13 +488,18 @@ class GlobalConfig:
         # 'loss_wp': 1.0,
         'loss_weighted_regression': 0.01,
         'loss_best_trajectory': 1.0,
-        'loss_kl_div': 1.0,
+        'loss_traj_kl_div': 1.0,
         'loss_target_speed': 1.0,
-        'diffusion_loss_velocity': 1,
-        'diffusion_loss_traj_recon': 1,
-        'diffusion_loss_speed_recon': 1,
-        'diffusion_loss_selection': 1,
+        'loss_speed_kl_div': 1.0,
+        'loss_traj_bce': 1.0,
+        # 'diffusion_loss_velocity': 1,
+        # 'diffusion_loss_traj_recon': 1,
+        # 'diffusion_loss_speed_recon': 1,
+        # 'diffusion_loss_selection': 1,
         # 'diffusion_loss_total': 1,
+        'sample_loss_weighted_regression': 0.01,
+        'sample_loss_best_trajectory': 1.0,
+        'sample_loss_kl_div': 1.0,
         'loss_semantic': 0.4,
         'loss_checkpoint': 1.0,
         'loss_semantic': 1.0,
@@ -509,8 +514,12 @@ class GlobalConfig:
         'loss_brake': 1.0,
         'loss_forcast': 0.2,
         'loss_selection': 0.0,
-        'loss_task_encoder_kl' : 1e-6,  # KL损失的权重
-        'loss_task_encoder_recon' : 1.0  # 重建损失的权重
+        'loss_task_encoder_kl' : 1e-7,  # KL损失的权重
+        'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
+        # 'loss_task_encoder_anchor': 0.05,
+        # 'task_encoder/avg_alignment_distance': 1,
+        # 'task_encoder/avg_max_prob': 1,
+        # 'task_encoder/alignment_std': 1
     }
     self.root_dir = ''
     self.val_towns = []
@@ -651,7 +660,7 @@ class GlobalConfig:
 
     # Whether to normalize the camera image by the imagenet distribution
     self.normalize_imagenet = True
-    self.use_wp_gru = False  # Whether to use the WP output GRU.
+    self.use_wp_gru = False  # Whether to use the WP output GRU. For current model training should be False here!
 
     # Semantic Segmentation
     self.use_semantic = True  # Whether to use semantic segmentation as auxiliary loss
@@ -722,6 +731,20 @@ class GlobalConfig:
         9,  # vehicle
         10,  # walker
     ]
+  
+    self.bev_class_names = [
+      "unlabeled",
+      "road",
+      "sidewalk",
+      "lane_markers",
+      "lane_markers broken",
+      "stop_signs",
+      "traffic_light_green",
+      "traffic_light_yellow",
+      "traffic_light_red",
+      "vehicle",
+      "walker"
+  ]
 
     # Color format BGR
     self.bev_classes_list = [
@@ -773,7 +796,7 @@ class GlobalConfig:
     # Unit meters. Points from the LiDAR higher than this threshold are discarded. Default uses all the points.
     self.max_height_lidar = 100.0
 
-    self.tp_attention = True  # Adds a TP at the TF decoder and computes it with attention visualization.
+    self.tp_attention = True  # Adds a TP at the TF decoder and computes it with attention visualization. Set to False when using tfpp gru for traj pred.
     self.multi_wp_output = False  # Predicts 2 WP outputs and uses the min loss of both.
 
     # whether to give the predicted path as input to the target speed network (and use more layers)
@@ -838,11 +861,11 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-09-08-59/track_cluster_log/4-0-0-1909-tracked_clusters.json"  # run under project root
-    self.selected_ability = 'Give_Way'  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
+    self.selected_ability = 'Emergency_Brake' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
-    self.trajectory_distance_threshold = 25
-    self.score_loss_weight = 1
+    # self.trajectory_distance_threshold = 25
+    # self.score_loss_weight = 1
 
 
     # -----------------------------------------------------------------------------
@@ -859,7 +882,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Dataset root
     # -----------------------------------------------------------------------------    
-    self.mini_dataset_root = '/home/dpc/syb/mini_dataset'
+    self.mini_dataset_root = '/home/syb/b2d_mini_v2'
     self.dataset_root = '/share/home/u19666033/syb/pdm_dataset'
 
     # -----------------------------------------------------------------------------
@@ -874,33 +897,41 @@ class GlobalConfig:
     # Task encoder (a VAE), some htper paras need to be modified in the model script
     # -----------------------------------------------------------------------------  
     self.use_task_encoder = True
-    self.task_encoder_hidden_dims = [1024, 512, 256]  # VAE编码器的隐藏层维度
+    self.task_encoder_hidden_dims = [1024, 1024, 1024, 1024]  # VAE编码器的隐藏层维度
     self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
-    self.task_encoder_temperature = 0.1  # softmax温度参数
+
+    self.detach_fuse_feat = True
+    self.sample_from_vae = True
+
+    # KL损失权重
+    # self.task_encoder_kl_weight = 0.1
+    # self.task_encoder_recon_weight = 1.0
+    # self.task_encoder_anchor_weight = 0.05
+    
+    # KL损失参数
+    # self.task_encoder_temperature = 0.5
+    # self.task_encoder_focus_threshold = 0.01
+    
+    # 重建损失类型
+    self.recon_loss_type = 'mse'  # 'mse', 'l1', 'smooth_l1'
 
     # -----------------------------------------------------------------------------
-    # JiT denoiser
+    # Speed front door encoder and anchor
     # -----------------------------------------------------------------------------  
-    # 扩散模型参数
-    # self.num_anchors = 10  # anchor数量
-    self.denoiser_depth = 12  # Transformer层数
-    self.label_drop_prob = 0.1  # CFG标签丢弃概率
-    self.P_mean = -1.2  # 时间步分布参数
-    self.P_std = 1.2
-    self.t_eps = 1e-3
-    self.noise_scale = 1.0
-    self.proj_dropout = 0.0
-    self.num_denoiser_heads = 8
-    self.denoiser_mlp_ratio = 4.0
-    self.attn_dropout = 0.0
+    self.prior_speed_path = "./team_code/dpmm_results/2025-12-06-00-07/track_cluster_log/4-0-0-1910-tracked_clusters.json"
+    self.sf_de_dim = 256  # 速度编码器维度
+    self.sf_num_heads = 8  # 注意力头数
+    self.sf_dropout = 0.1  # dropout率
 
-    # JiT's 损失权重
-    self.velocity_weight = 1.0
-    self.traj_weight = 1.0
-    self.speed_weight = 1.0  
-    self.selection_weight = 1.0
-
-    # self.denoiser_training = True
+    # -----------------------------------------------------------------------------
+    # Fuse feat front door encoder and anchor
+    # -----------------------------------------------------------------------------
+    self.use_traj_front_door_encoder = True
+    self.use_prior_fuseFeat = False
+    self.prior_fuseFeat_path = []
+    self.ff_de_dim = 256  # 速度编码器维度
+    self.ff_num_heads = 8  # 注意力头数
+    self.ff_dropout = 0.1  # dropout率
 
   def initialize(self, root_dir='', setting='all', **kwargs):
     for k, v in kwargs.items():

@@ -117,7 +117,7 @@ class LidarCenterNet(nn.Module):
         ts_input_channel = self.config.gru_input_size
       else:
         ts_input_channel = self.config.gru_hidden_size
-      if self.config.input_path_to_target_speed_network:
+      if self.config.input_path_to_target_speed_network:  # 0
         extra_dimensions = 2 * self.config.predict_checkpoint_len
         self.target_speed_network = nn.Sequential(
             nn.Linear(ts_input_channel + extra_dimensions, ts_input_channel + extra_dimensions), nn.ReLU(inplace=True),
@@ -265,7 +265,7 @@ class LidarCenterNet(nn.Module):
     else:
       label_smoothing = 0.0
 
-    if self.config.use_focal_loss:
+    if self.config.use_focal_loss:  # 0
       self.loss_speed = FocalLoss(alpha=self.speed_weights, gamma=self.config.focal_loss_gamma)
 
     else:
@@ -353,6 +353,7 @@ class LidarCenterNet(nn.Module):
         #       joined_wp_features = self.join(self.wp_query.repeat(bs, 1, 1), fused_features)
         #     pred_wp = self.wp_decoder(joined_wp_features, target_point)
         if self.config.use_controller_input_prediction:  # 0 or 1
+          self.last_joined_features = None
           if self.config.tp_attention:  # 0
             tp_token = self.tp_encoder(target_point)
             tp_token = tp_token + self.tp_pos_embed
@@ -379,6 +380,7 @@ class LidarCenterNet(nn.Module):
           # print_data_info(gru_features)  # torch.Size([2, 10, 256])
           target_speed_features = joined_checkpoint_features[:, self.config.predict_checkpoint_len]
           # print_data_info(target_speed_features)  # torch.Size([2, 256])
+          self.last_joined_features = joined_checkpoint_features
 
           # pred_checkpoint = self.checkpoint_decoder(gru_features, target_point) # here we have pred checkpoints
           # print_data_info(pred_checkpoint)  # torch.Size([2, 10, 2])
