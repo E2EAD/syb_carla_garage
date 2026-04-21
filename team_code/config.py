@@ -516,6 +516,10 @@ class GlobalConfig:
         'loss_selection': 0.0,
         'loss_task_encoder_kl' : 1e-7,  # KL损失的权重
         'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
+        'loss_a3d_total': 0.0,
+        'loss_a3d_traj_kd': 0.0,
+        'loss_a3d_speed_kd': 0.0,
+        'loss_a3d_offset_kd': 0.0,
         # 'loss_task_encoder_anchor': 0.05,
         # 'task_encoder/avg_alignment_distance': 1,
         # 'task_encoder/avg_max_prob': 1,
@@ -861,7 +865,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
     self.selected_ability = 'Emergency_Brake' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
@@ -880,28 +884,45 @@ class GlobalConfig:
     self.temperature = 1
 
     # -----------------------------------------------------------------------------
+    # A3D / AAAD continual distillation
+    # -----------------------------------------------------------------------------
+    self.use_a3d = False
+    self.a3d_ref_file = None
+    self.a3d_beta = 5.0
+    self.a3d_tau = 0.6
+    self.a3d_w_traj = 0.7
+    self.a3d_w_speed = 0.3
+    self.a3d_traj_threshold = 30.0
+    self.a3d_lambda_max = 0.6
+    self.a3d_lambda_ema = 0.8
+    self.a3d_kd_temperature = 2.0
+    self.a3d_traj_kd_weight = 1.0
+    self.a3d_speed_kd_weight = 1.0
+    self.a3d_offset_kd_weight = 0.5
+
+    # -----------------------------------------------------------------------------
     # Dataset root
     # -----------------------------------------------------------------------------    
-    self.mini_dataset_root = '/home/syb/b2d_mini_v2'
+    self.mini_dataset_root = '/home/spc/b2d_mini_v2'
     self.dataset_root = '/share/home/u19666033/syb/pdm_dataset'
 
     # -----------------------------------------------------------------------------
     # Freeze the TF bachbone and the aux task head and other options
     # -----------------------------------------------------------------------------  
     # self.if_freeze_tfBackbone_and_auxTaskHead = True
-    self.use_moe_to_pred_speed = True
+    # self.use_moe_to_pred_speed = True
 
-    self.expert_out_dim = 28
+    # self.expert_out_dim = 28
 
     # -----------------------------------------------------------------------------
     # Task encoder (a VAE), some htper paras need to be modified in the model script
     # -----------------------------------------------------------------------------  
-    self.use_task_encoder = True
-    self.task_encoder_hidden_dims = [1024, 1024, 1024, 1024]  # VAE编码器的隐藏层维度
-    self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
+    # self.use_task_encoder = True
+    # self.task_encoder_hidden_dims = [1024, 1024, 1024, 1024]  # VAE编码器的隐藏层维度
+    # self.recon_loss_type = 'mse'  # 重建损失类型：'mse', 'l1', 'smooth_l1'
 
-    self.detach_fuse_feat = True
-    self.sample_from_vae = True
+    # self.detach_fuse_feat = True
+    # self.sample_from_vae = True
 
     # KL损失权重
     # self.task_encoder_kl_weight = 0.1
@@ -913,20 +934,20 @@ class GlobalConfig:
     # self.task_encoder_focus_threshold = 0.01
     
     # 重建损失类型
-    self.recon_loss_type = 'mse'  # 'mse', 'l1', 'smooth_l1'
+    # self.recon_loss_type = 'mse'  # 'mse', 'l1', 'smooth_l1'
 
     # -----------------------------------------------------------------------------
     # Speed front door encoder and anchor
     # -----------------------------------------------------------------------------  
-    self.prior_speed_path = "./team_code/dpmm_results/2025-12-06-00-07/track_cluster_log/4-0-0-1910-tracked_clusters.json"
-    self.sf_de_dim = 256  # 速度编码器维度
-    self.sf_num_heads = 8  # 注意力头数
-    self.sf_dropout = 0.1  # dropout率
+    # self.prior_speed_path = "./team_code/dpmm_results/2025-12-06-00-07/track_cluster_log/4-0-0-1910-tracked_clusters.json"
+    # self.sf_de_dim = 256  # 速度编码器维度
+    # self.sf_num_heads = 8  # 注意力头数
+    # self.sf_dropout = 0.1  # dropout率
 
     # -----------------------------------------------------------------------------
     # Fuse feat front door encoder and anchor
     # -----------------------------------------------------------------------------
-    self.use_traj_front_door_encoder = True
+    self.use_traj_front_door_encoder = False
     self.use_prior_fuseFeat = False
     self.prior_fuseFeat_path = []
     self.ff_de_dim = 256  # 速度编码器维度
