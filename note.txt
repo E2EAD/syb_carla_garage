@@ -12,23 +12,15 @@ export HF_ENDPOINT=https://hf-mirror.com
 # carla takes too much gpu:
 ./CarlaUE4.sh -RenderOffScreen
 
-
-# quiz
-1.MoEv1.7 suffer long time calculating box essembles. ban it for test currently (in my_moe_agent_v2.py)
-2.need traj to be 10 different tokens in jit?
-3.how the pred probs are calcuated? 
-
 # note
 1.MoEv1.6: A strict anchorID-offsetExpert matching MoE, with score head's soft label comes from distance. Use my_moe_decoder_v2. 
 2.MoEv1.7: MoEv1.6 with tf++ backbone and aux task head frozen.
 3.MoE-lh(aka MoEv2): Score head's soft label comes from log-likehood.
 4.MoEv1.8: To be writen. Add distill loss for score head to maintain learned knowledge.
+5.xxA3D: first A3D, using speed and traj pred for advantage calcuation. backbone is frozen.
+6.xxA3D_v2: seperate traj and speed pred for advantage calcuation
 
 
 #TODO
-1. fix vis model in my_model*
-6. use the metrics (FWT, NBT, AUC) from the LEBRO
-7. for open loop eval code, add proper way to manage the bev sem results, and add the ability info so that the metrics for every ability could be seen
-8. old planning tokens may need to be frozen as well
 9. need early  stopping?
-10. need isolating the score head?
+11. unified cl loss design: L_new/task + L_old/disitll + R_regu

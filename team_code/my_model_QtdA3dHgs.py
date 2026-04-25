@@ -26,7 +26,7 @@ from traj_front_door_encoder import TrajFrontDoorEncoder
 from fuseFeat_front_door_encoder import FuseFeatFrontDoorEncoder
 
 
-class LidarCenterNet(nn.Module):
+class LidarCenterNetQtdA3dHgs(nn.Module):
   """
   The main model class. It can run all model configurations.
   """
@@ -39,6 +39,7 @@ class LidarCenterNet(nn.Module):
     self.config.use_prior_fuseFeat = False
     self.lateral_pid_controller = LateralPIDController(self.config)
     self.latest_distill_tensors = None
+    self.latest_hgs_tensors = None
 
     self.speed_histogram = []
     self.make_histogram = int(os.environ.get('HISTOGRAM', 0))
@@ -465,6 +466,12 @@ class LidarCenterNet(nn.Module):
             pred_target_speed = self.target_speed_network(target_speed_features) 
             
     self.latest_distill_tensors = distill_tensors if len(distill_tensors) > 0 else None
+    self.latest_hgs_tensors = None
+    if len(distill_tensors) > 0:
+      joined_tokens = distill_tensors.get('bev_tokens')
+      if joined_tokens is not None:
+        # Save graph-connected bottleneck features for HGS Jacobian extraction.
+        self.latest_hgs_tensors = {'bev_tokens': joined_tokens}
 
     # Auxiliary tasks
     pred_semantic = None

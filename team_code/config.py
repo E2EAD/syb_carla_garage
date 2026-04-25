@@ -888,17 +888,40 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     self.use_a3d = False
     self.a3d_ref_file = None
+    # Branch-wise adaptive gating (trajectory and speed are gated separately).
+    self.a3d_traj_beta = 5.0
+    self.a3d_speed_beta = 5.0
+    self.a3d_traj_tau = 0.6
+    self.a3d_speed_tau = 0.6
+    self.a3d_traj_lambda_max = 0.6
+    self.a3d_speed_lambda_max = 0.6
+    self.a3d_traj_lambda_ema = 0.8
+    self.a3d_speed_lambda_ema = 0.8
+
+    # Legacy shared knobs for backward compatibility (kept for older scripts).
     self.a3d_beta = 5.0
     self.a3d_tau = 0.6
-    self.a3d_w_traj = 0.7
-    self.a3d_w_speed = 0.3
     self.a3d_traj_threshold = 30.0
     self.a3d_lambda_max = 0.6
     self.a3d_lambda_ema = 0.8
+    # Legacy combined-score weights (not used by split-gating A3D).
+    self.a3d_w_traj = 0.7
+    self.a3d_w_speed = 0.3
     self.a3d_kd_temperature = 2.0
     self.a3d_traj_kd_weight = 1.0
     self.a3d_speed_kd_weight = 1.0
     self.a3d_offset_kd_weight = 0.5
+    # -----------------------------------------------------------------------------
+    # HGS (Hybrid Gradient Surgery) on top of A3D
+    # -----------------------------------------------------------------------------
+    self.hgs_enable = 0
+    self.hgs_advantage_thresh = 0.1
+    self.hgs_subspace_dim = 64
+    self.hgs_svd_energy = 0.98
+    self.hgs_memory_file = ''
+    self.hgs_basis_queue_size = 200
+    # Layer prefixes to constrain with HGS memory / instant bases.
+    self.hgs_layer_prefixes = ['join.', 'query_traj_decoder.', 'target_speed_network.']
 
     # -----------------------------------------------------------------------------
     # Dataset root
