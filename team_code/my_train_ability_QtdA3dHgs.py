@@ -32,7 +32,7 @@ import torchmetrics
 from collections import deque
 
 from config import GlobalConfig
-from my_model_QtdA3dHgs import LidarCenterNetQtdA3dHgs
+from my_model_QtdA3dHgs import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -159,7 +159,7 @@ def load_teacher_from_dir(teacher_dir, device):
   ckpt_files = sorted(ckpt_files)
   teacher_ckpt = os.path.join(teacher_dir, ckpt_files[-1])
 
-  teacher_model = LidarCenterNetQtdA3dHgs(teacher_config)
+  teacher_model = LidarCenterNet(teacher_config)
   teacher_model.cuda(device=device)
   teacher_model = load_checkpoint_ignore_anchors(teacher_model, teacher_ckpt, device)
   teacher_model.eval()
@@ -846,7 +846,7 @@ def main():
   if config.use_plant:
     model = PlanT(config)
   else:
-    model = LidarCenterNetQtdA3dHgs(config)
+    model = LidarCenterNet(config)
 
   # Register loss weights as parameters of the model if we learn them
   if args.learn_multi_task_weights:

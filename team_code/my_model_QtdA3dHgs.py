@@ -26,7 +26,7 @@ from traj_front_door_encoder import TrajFrontDoorEncoder
 from fuseFeat_front_door_encoder import FuseFeatFrontDoorEncoder
 
 
-class LidarCenterNetQtdA3dHgs(nn.Module):
+class LidarCenterNet(nn.Module):
   """
   The main model class. It can run all model configurations.
   """

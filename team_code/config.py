@@ -891,8 +891,8 @@ class GlobalConfig:
     # Branch-wise adaptive gating (trajectory and speed are gated separately).
     self.a3d_traj_beta = 5.0
     self.a3d_speed_beta = 5.0
-    self.a3d_traj_tau = 0.6
-    self.a3d_speed_tau = 0.6
+    self.a3d_traj_tau = 0.9
+    self.a3d_speed_tau = 0.9
     self.a3d_traj_lambda_max = 0.6
     self.a3d_speed_lambda_max = 0.6
     self.a3d_traj_lambda_ema = 0.8
@@ -900,13 +900,13 @@ class GlobalConfig:
 
     # Legacy shared knobs for backward compatibility (kept for older scripts).
     self.a3d_beta = 5.0
-    self.a3d_tau = 0.6
+    self.a3d_tau = 0.9
     self.a3d_traj_threshold = 30.0
     self.a3d_lambda_max = 0.6
     self.a3d_lambda_ema = 0.8
     # Legacy combined-score weights (not used by split-gating A3D).
-    self.a3d_w_traj = 0.7
-    self.a3d_w_speed = 0.3
+    self.a3d_w_traj = 0.5
+    self.a3d_w_speed = 0.5
     self.a3d_kd_temperature = 2.0
     self.a3d_traj_kd_weight = 1.0
     self.a3d_speed_kd_weight = 1.0
