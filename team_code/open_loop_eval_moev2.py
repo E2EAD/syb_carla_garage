@@ -3,7 +3,8 @@ Open-loop evaluation script for trajectory and speed prediction models.
 Usage:
 python open_loop_eval.py --logdir /path/to/model_folder --data_root /path/to/dataset --output_dir /path/to/results
 i.e. :
-python ./team_code/open_loop_eval.py --logdir  --data_root --output_dir --model_file
+python ./team_code/open_loop_eval_moev2.py --logdir /media/spc/新加卷/garage2_weights/syb_TFFdeQtd_0-eb_2stg_v2 \
+--data_root /home/spc/b2d_mini_v2 --output_dir ./ol_eval_result/TFFdeQtd_0-eb_2stg --model_file model_0030.pth
 
  add the following text into model folder's config.json:
      "bev_class_names" : [
@@ -40,6 +41,13 @@ from collections import defaultdict
 import pandas as pd
 from scipy.spatial.distance import cdist
 from sklearn.metrics import confusion_matrix, classification_report, accuracy_score, f1_score
+import time
+import psutil
+
+try:
+    import GPUtil
+except ImportError:
+    GPUtil = None
 
 
 # import sys
@@ -244,6 +252,12 @@ class OpenLoopEvaluator:
         # # Add to metrics storage
         # self.metrics['bev_semantic'] = defaultdict(list)
 
+        # Performance monitoring, aligned with open_loop_eval.py
+        self.inference_times = []
+        self.memory_usages = []
+        self.cpu_usages = []
+        self.gpu_usages = []
+
     def set_random_seed(self, seed):
         """设置所有相关的随机种子"""
         random.seed(seed)
@@ -331,9 +345,11 @@ class OpenLoopEvaluator:
         
         # Compute final metrics
         self.compute_metrics()
+        self.compute_performance_metrics()
         
         # Save results
         self.save_results()
+        self.save_performance_logs()
         
         # Generate visualizations
         self.visualize_results()
@@ -373,6 +389,13 @@ class OpenLoopEvaluator:
         # if 'bev_semantic' in data:
         #     bev_gt = data['bev_semantic'].to(self.device, dtype=torch.long)
         
+        if torch.cuda.is_available():
+            torch.cuda.reset_peak_memory_stats(self.device)
+            torch.cuda.synchronize(self.device)
+            start_memory = torch.cuda.memory_allocated(self.device) / 1024**2
+            start_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2
+        start_time = time.time()
+
         # Model forward pass
         pred_wp, pred_target_speed, pred_trajectories, pred_traj_probs, _, pred_bev_semantic, _, _, _, _, _ = self.model(
             rgb=rgb,
@@ -381,6 +404,58 @@ class OpenLoopEvaluator:
             ego_vel=ego_vel,
             command=command
         )
+
+        if torch.cuda.is_available():
+            torch.cuda.synchronize(self.device)
+        inference_time = time.time() - start_time
+
+        if torch.cuda.is_available():
+            end_memory = torch.cuda.memory_allocated(self.device) / 1024**2
+            end_memory_reserved = torch.cuda.memory_reserved(self.device) / 1024**2
+            peak_memory = torch.cuda.max_memory_allocated(self.device) / 1024**2
+            peak_memory_reserved = torch.cuda.max_memory_reserved(self.device) / 1024**2
+            memory_info = {
+                'allocated_before': start_memory,
+                'allocated_after': end_memory,
+                'allocated_peak': peak_memory,
+                'reserved_before': start_memory_reserved,
+                'reserved_after': end_memory_reserved,
+                'reserved_peak': peak_memory_reserved,
+                'inference_time': inference_time,
+                'batch_size': data['rgb'].shape[0],
+                'batch_idx': batch_idx,
+            }
+        else:
+            memory_info = {
+                'inference_time': inference_time,
+                'batch_size': data['rgb'].shape[0],
+                'batch_idx': batch_idx,
+            }
+
+        cpu_percent = psutil.cpu_percent(interval=None)
+        gpu_info = None
+        if GPUtil is not None:
+            try:
+                gpu_index = self.device.index if self.device.type == 'cuda' and self.device.index is not None else 0
+                gpus = GPUtil.getGPUs()
+                if gpus and gpu_index < len(gpus):
+                    gpu = gpus[gpu_index]
+                    gpu_info = {
+                        'gpu_id': gpu.id,
+                        'load_percent': gpu.load * 100,
+                        'memory_used_mb': gpu.memoryUsed,
+                        'memory_total_mb': gpu.memoryTotal,
+                        'memory_util_percent': gpu.memoryUtil * 100,
+                        'temperature_c': gpu.temperature,
+                    }
+            except Exception:
+                gpu_info = None
+
+        self.inference_times.append(inference_time)
+        self.memory_usages.append(memory_info)
+        self.cpu_usages.append(cpu_percent)
+        if gpu_info is not None:
+            self.gpu_usages.append(gpu_info)
         
         # Convert predictions
         # print(f'pred_target_speed shape: {pred_target_speed.shape}')
@@ -691,6 +766,97 @@ class OpenLoopEvaluator:
         #         if not np.isnan(iou):
         #             print(f"  Class {i}: {iou:.4f}")
     
+
+    def compute_performance_metrics(self):
+        """Compute inference speed, CPU usage, and GPU memory/utilization stats."""
+        if 'summary' not in self.metrics:
+            self.metrics['summary'] = {}
+
+        if self.inference_times:
+            times = np.array(self.inference_times, dtype=np.float64)
+            batch_sizes = np.array([m.get('batch_size', self.config.batch_size) for m in self.memory_usages], dtype=np.float64)
+            total_samples = float(batch_sizes.sum()) if len(batch_sizes) else float(len(self.dataset))
+            total_time = float(times.sum())
+            self.metrics['summary']['performance'] = {
+                'num_batches': int(len(times)),
+                'total_samples': int(total_samples),
+                'total_inference_time_sec': total_time,
+                'avg_batch_inference_time_sec': float(times.mean()),
+                'median_batch_inference_time_sec': float(np.median(times)),
+                'min_batch_inference_time_sec': float(times.min()),
+                'max_batch_inference_time_sec': float(times.max()),
+                'std_batch_inference_time_sec': float(times.std()),
+                'avg_ms_per_sample': float(total_time / max(total_samples, 1.0) * 1000.0),
+                'throughput_samples_per_sec': float(total_samples / total_time) if total_time > 0 else 0.0,
+                'throughput_batches_per_sec': float(len(times) / total_time) if total_time > 0 else 0.0,
+            }
+
+        if self.cpu_usages:
+            cpu_usages = np.array(self.cpu_usages, dtype=np.float64)
+            self.metrics['summary']['cpu_usage'] = {
+                'mean_percent': float(cpu_usages.mean()),
+                'std_percent': float(cpu_usages.std()),
+                'min_percent': float(cpu_usages.min()),
+                'max_percent': float(cpu_usages.max()),
+                'median_percent': float(np.median(cpu_usages)),
+            }
+
+        if self.memory_usages and torch.cuda.is_available():
+            allocated_peaks = np.array([m.get('allocated_peak', 0.0) for m in self.memory_usages], dtype=np.float64)
+            reserved_peaks = np.array([m.get('reserved_peak', 0.0) for m in self.memory_usages], dtype=np.float64)
+            allocated_after = np.array([m.get('allocated_after', 0.0) for m in self.memory_usages], dtype=np.float64)
+            reserved_after = np.array([m.get('reserved_after', 0.0) for m in self.memory_usages], dtype=np.float64)
+            self.metrics['summary']['gpu_memory'] = {
+                'allocated_peak_mean_mb': float(allocated_peaks.mean()),
+                'allocated_peak_max_mb': float(allocated_peaks.max()),
+                'reserved_peak_mean_mb': float(reserved_peaks.mean()),
+                'reserved_peak_max_mb': float(reserved_peaks.max()),
+                'allocated_after_mean_mb': float(allocated_after.mean()),
+                'reserved_after_mean_mb': float(reserved_after.mean()),
+            }
+
+        if self.gpu_usages:
+            loads = np.array([g['load_percent'] for g in self.gpu_usages], dtype=np.float64)
+            mem_utils = np.array([g['memory_util_percent'] for g in self.gpu_usages], dtype=np.float64)
+            temps = np.array([g['temperature_c'] for g in self.gpu_usages], dtype=np.float64)
+            self.metrics['summary']['gpu_usage'] = {
+                'load_mean_percent': float(loads.mean()),
+                'load_max_percent': float(loads.max()),
+                'memory_util_mean_percent': float(mem_utils.mean()),
+                'memory_util_max_percent': float(mem_utils.max()),
+                'temperature_mean_c': float(temps.mean()),
+                'temperature_max_c': float(temps.max()),
+                'samples': int(len(self.gpu_usages)),
+            }
+
+    def save_performance_logs(self):
+        """Save detailed per-batch performance logs."""
+        perf_dir = self.output_dir / "performance"
+        perf_dir.mkdir(exist_ok=True)
+
+        rows = []
+        for idx, memory_info in enumerate(self.memory_usages):
+            row = dict(memory_info)
+            row['cpu_percent'] = self.cpu_usages[idx] if idx < len(self.cpu_usages) else None
+            if idx < len(self.gpu_usages):
+                for key, value in self.gpu_usages[idx].items():
+                    row[f'gputil_{key}'] = value
+            rows.append(row)
+
+        if rows:
+            pd.DataFrame(rows).to_csv(perf_dir / "per_batch_performance.csv", index=False)
+            with open(perf_dir / "per_batch_performance.json", 'w') as f:
+                json.dump(rows, f, indent=2)
+
+        if 'summary' in self.metrics:
+            perf_summary = {
+                key: value for key, value in self.metrics['summary'].items()
+                if key in {'performance', 'cpu_usage', 'gpu_memory', 'gpu_usage'}
+            }
+            with open(perf_dir / "performance_summary.json", 'w') as f:
+                json.dump(perf_summary, f, indent=2)
+            print(f"Performance logs saved to: {perf_dir}")
+
     def save_results(self):
         """Save evaluation results to files"""
         # Save metrics as JSON

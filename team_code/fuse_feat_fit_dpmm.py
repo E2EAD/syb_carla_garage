@@ -8,6 +8,8 @@ from collections import defaultdict
 from datetime import datetime
 import json
 from tqdm import tqdm
+import time
+import resource
 
 # Import your existing modules
 from my_model_wTFFdeQtd import LidarCenterNet
@@ -28,6 +30,31 @@ jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
 from utils import print_data_info
 
 
+def tensor_nbytes(tensor):
+    return tensor.numel() * tensor.element_size() if torch.is_tensor(tensor) else 0
+
+
+def process_memory_mb():
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024
+
+
+def gpu_memory_stats_mb():
+    if not torch.cuda.is_available():
+        return {'allocated_mb': 0.0, 'reserved_mb': 0.0, 'max_allocated_mb': 0.0, 'max_reserved_mb': 0.0}
+    return {
+        'allocated_mb': torch.cuda.memory_allocated() / (1024 ** 2),
+        'reserved_mb': torch.cuda.memory_reserved() / (1024 ** 2),
+        'max_allocated_mb': torch.cuda.max_memory_allocated() / (1024 ** 2),
+        'max_reserved_mb': torch.cuda.max_memory_reserved() / (1024 ** 2),
+    }
+
+
+def append_jsonl(path, record):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, 'a') as f:
+        f.write(json.dumps(record) + '\n')
+
+
 class FeatureExtractor:
     """
     Extracts joined_checkpoint_features from trained model for DPMM clustering
@@ -39,6 +66,7 @@ class FeatureExtractor:
         self.model = self.load_model(model_path)
         self.feature_buffer = []
         self.sample_buffer = []
+        self.raw_batch_bytes = 0
         
     def load_model(self, model_path):
         """Load trained model"""
@@ -64,15 +92,18 @@ class FeatureExtractor:
             samples: corresponding input data for reference
         """
         self.feature_buffer = []
+        self.raw_batch_bytes = 0
         
         batch_count = 0
         with torch.no_grad():
             # for batch in tqdm(dataloader, desc="Extracting features"):
             for batch_idx, batch in enumerate(tqdm(dataloader, desc="Extracting features")):
                 with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=bool(self.config.use_amp)):
-                    # if num_batches and batch_count >= num_batches:
-                    #     break
+                    if max_num_batches is not None and batch_count >= max_num_batches:
+                        break
                         
+                    self.raw_batch_bytes += sum(tensor_nbytes(v) for v in batch.values() if torch.is_tensor(v))
+
                     # Move data to device
                     # batch = {k: v.to(self.device) if torch.is_tensor(v) else v 
                     #         for k, v in batch.items()}
@@ -265,66 +296,125 @@ class DpmmFeatureTrainer:
         
     def train_dpmm_on_features(self, features, dataset_name, epochs=1, iterations_per_epoch=1):
         """
-        Train DPMM on extracted features with periodic sampling
+        Train DPMM on extracted features with a size-based feature buffer.
+        DPMM updates only when the buffer reaches dpmm_config['feature_buffer_size'].
         """
         print(f"Starting DPMM training on {len(features)} features")
-        
-        # Flatten features for DPMM: (N, 11, 256) -> (N, 2816)
         features_flat = features.reshape(features.shape[0], -1)
         print(f"Flattened features shape: {features_flat.shape}")
-        
-        # Split data for incremental training
-        num_samples = len(features_flat)
-        samples_per_iteration = max(1, num_samples // iterations_per_epoch)
-        
+
+        buffer_size = self.dpmm_config.get('feature_buffer_size', self.dpmm_config.get('dpmm_buffer_size', 4096))
+        max_replay = self.dpmm_config.get('max_replay_samples_per_update', 5000)
+        replay_ratio = self.dpmm_config.get('replay_sample_ratio', 1.0)
+        raw_sample_bytes = self.dpmm_config.get('raw_sample_bytes', 0)
+        overhead_log_path = self.save_dir / 'overhead_log' / 'fuse_feat_dpmm_overhead.jsonl'
+        summary_path = self.save_dir / 'overhead_log' / 'fuse_feat_dpmm_summary.json'
+        overhead_log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        feature_buffer = []
+        buffered_samples = 0
+        update_records = []
+        total_feature_buffer_bytes = 0
+        total_raw_replay_bytes = 0
+        update_id = 0
+
         for epoch in range(epochs):
             print(f"\n=== Epoch {epoch + 1}/{epochs} ===")
-            
-            for iteration in range(iterations_per_epoch):
-                print(f"Iteration {iteration + 1}/{iterations_per_epoch}")
-                
-                # Get current batch of features
-                start_idx = iteration * samples_per_iteration
-                end_idx = min((iteration + 1) * samples_per_iteration, num_samples)
-                current_features = features_flat[start_idx:end_idx]
-                # print_data_info(current_features)
+            for start_idx in range(0, len(features_flat), buffer_size):
+                current_features = features_flat[start_idx:start_idx + buffer_size]
+                feature_buffer.append(current_features)
+                buffered_samples += current_features.size(0)
+                total_feature_buffer_bytes += tensor_nbytes(current_features)
+                if raw_sample_bytes > 0:
+                    total_raw_replay_bytes += raw_sample_bytes * current_features.size(0)
 
-                # if iteration > 0 or epoch > 0:
-                # Sample from DPMM and combine with new data
-                K = len(self.dpmm.components)
-                new_data_ratio = 1 if K==0 else 0.5
-                num_to_sample = int(min((1 - new_data_ratio) * len(current_features) / new_data_ratio, 5000))
-                
-                print(f"Sampling {num_to_sample} from DPMM, adding {len(current_features)} new features")
-                
-                # Sample from current DPMM
-                sampled_features = self.dpmm.sample_all(num_samples=num_to_sample)
-                # print_data_info(sampled_features)
-                
-                # Combine sampled and new features
-                combined_features = torch.cat([sampled_features, current_features], dim=0)
-                # else:
-                #     # First iteration - just use current features
-                #     combined_features = current_features
-                
-                # Clean data
-                combined_features = self._purge_invalid_values(combined_features, "combined_features")
-                
-                if len(combined_features) > 0:
-                    # Fit DPMM
-                    self.dpmm.fit(combined_features)
-                    
-                    # Save tracked clusters
-                    self.save_tracked_clusters(
-                        dataset_name=dataset_name,
-                        epoch=epoch,
-                        iteration=iteration,
-                        features=current_features,
-                    )
-                    
-                    # Print current cluster info
-                    self.print_cluster_info(epoch, iteration)
-    
+                while buffered_samples >= buffer_size:
+                    buffered_data = torch.cat(feature_buffer, dim=0)
+                    update_features = buffered_data[:buffer_size]
+                    remaining_features = buffered_data[buffer_size:]
+                    feature_buffer = [remaining_features] if remaining_features.numel() > 0 else []
+                    buffered_samples = remaining_features.size(0) if remaining_features.numel() > 0 else 0
+
+                    if len(self.dpmm.components) == 0:
+                        num_to_sample = 0
+                        sampled_features = None
+                    else:
+                        num_to_sample = int(len(update_features) * replay_ratio)
+                        num_to_sample = min(num_to_sample, max_replay)
+                        sampled_features = self.dpmm.sample_all(num_samples=num_to_sample) if num_to_sample > 0 else None
+
+                    print(f"Updating DPMM with {len(update_features)} buffered features and {num_to_sample} replay samples")
+                    if torch.cuda.is_available():
+                        torch.cuda.reset_peak_memory_stats()
+                        torch.cuda.synchronize()
+                    memory_before = process_memory_mb()
+                    gpu_before = gpu_memory_stats_mb()
+                    start_time = time.perf_counter()
+
+                    if sampled_features is not None:
+                        combined_features = torch.cat([sampled_features, update_features], dim=0)
+                    else:
+                        combined_features = update_features
+                    combined_features = self._purge_invalid_values(combined_features, "combined_features")
+
+                    if len(combined_features) > 0:
+                        self.dpmm.fit(combined_features)
+                        self.save_tracked_clusters(
+                            dataset_name=dataset_name,
+                            epoch=epoch,
+                            iteration=update_id,
+                            features=update_features,
+                        )
+                        self.print_cluster_info(epoch, update_id)
+
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    elapsed = time.perf_counter() - start_time
+                    memory_after = process_memory_mb()
+                    gpu_after = gpu_memory_stats_mb()
+
+                    feature_buffer_bytes = tensor_nbytes(update_features)
+                    raw_buffer_bytes = raw_sample_bytes * len(update_features) if raw_sample_bytes > 0 else 0
+                    record = {
+                        'update_id': update_id,
+                        'dataset_name': dataset_name,
+                        'epoch': epoch,
+                        'buffer_samples': int(len(update_features)),
+                        'replay_samples': int(num_to_sample),
+                        'fit_samples': int(len(combined_features)),
+                        'feature_dim': int(update_features.size(1)),
+                        'update_time_sec': elapsed,
+                        'process_memory_before_mb': memory_before,
+                        'process_memory_after_mb': memory_after,
+                        'process_memory_delta_mb': memory_after - memory_before,
+                        'gpu_before': gpu_before,
+                        'gpu_after': gpu_after,
+                        'feature_buffer_memory_mb': feature_buffer_bytes / (1024 ** 2),
+                        'raw_replay_buffer_memory_mb': raw_buffer_bytes / (1024 ** 2),
+                        'raw_vs_feature_saving_ratio': 1.0 - (feature_buffer_bytes / raw_buffer_bytes) if raw_buffer_bytes > 0 else None,
+                        'num_clusters': len(self.dpmm.get_current_cluster_list()),
+                    }
+                    update_records.append(record)
+                    append_jsonl(overhead_log_path, record)
+                    update_id += 1
+
+        summary = {
+            'num_updates': len(update_records),
+            'feature_buffer_size': buffer_size,
+            'total_feature_buffer_storage_mb': total_feature_buffer_bytes / (1024 ** 2),
+            'total_raw_replay_storage_mb': total_raw_replay_bytes / (1024 ** 2),
+            'storage_saving_mb': (total_raw_replay_bytes - total_feature_buffer_bytes) / (1024 ** 2) if total_raw_replay_bytes > 0 else None,
+            'storage_saving_ratio': 1.0 - (total_feature_buffer_bytes / total_raw_replay_bytes) if total_raw_replay_bytes > 0 else None,
+            'avg_update_time_sec': float(np.mean([r['update_time_sec'] for r in update_records])) if update_records else 0.0,
+            'max_update_time_sec': float(np.max([r['update_time_sec'] for r in update_records])) if update_records else 0.0,
+            'avg_process_memory_delta_mb': float(np.mean([r['process_memory_delta_mb'] for r in update_records])) if update_records else 0.0,
+            'max_gpu_allocated_mb': float(np.max([r['gpu_after']['max_allocated_mb'] for r in update_records])) if update_records else 0.0,
+            'overhead_log_path': str(overhead_log_path),
+        }
+        with open(summary_path, 'w') as f:
+            json.dump(summary, f, indent=2)
+        print(f"Saved DPMM overhead summary to {summary_path}")
+
     def save_tracked_clusters(self, dataset_name, epoch, iteration, features=None):
         """Save tracked clusters in multiple formats"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -431,17 +521,21 @@ def main():
     dpmm_config = {
         "gamma0": 500,
         "num_lap": 1000,
-        "sF": 1e-5
+        "sF": 1e-5,
+        "feature_buffer_size": 4096,
+        "replay_sample_ratio": 1.0,
+        "max_replay_samples_per_update": 5000,
+        "raw_sample_bytes": 0,
     }
     
     # Paths - adjust these according to your setup
     # dataset_root = "/home/syb/b2d_mini_v2"  # /media/syb/syb_disk_2/b2d_base_v3/carla_dataset
-    dataset_root = '/share/home/u19666033/syb/pdm_dataset'
+    dataset_root = "/share/home/u19666033/syb/pdm_dataset"  # '/share/home/u19666033/syb/pdm_dataset'
 
     model_folder = "./log/syb_TFFdeQtd_2stg"  # need choose
     dpmm_load_path = None # need choose 'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
-    model_path = os.path.join(model_folder, "model_0001.pth")
+    model_path = os.path.join(model_folder, "model_0030.pth")
     config_path = os.path.join(model_folder, "config.json")
         # Load the config saved during training
     with open(config_path, 'rt', encoding='utf-8') as f:
@@ -455,13 +549,14 @@ def main():
     config.__dict__.update(loaded_config.__dict__)
     
     # Select ability for dataset
-    ability = 'All_Ability'  # need choose. Adjust based on your dataset 'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
-    ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
+    ability = 'Give_Way' # need choose. Adjust based on your dataset 'Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    # ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
+    ability_list = ['Give_Way']
 
     dataset_name = ability  
 
 
-    output_dir = os.path.join("/home/syb/carla_garage/dpmm_feature/noMoe_wTFFdeQtd", ability)  # need choose
+    output_dir = os.path.join("/share/home/u19666033/syb/carla_garage/dpmm_feature/noMoe_wTFFdeQtd", ability)  # need choose
     # dpmm_save_dir = os.path.join(output_dir, "dpmm_model")
     # os.makedirs(dpmm_save_dir)
     output_dir = str(output_dir)
@@ -510,6 +605,8 @@ def main():
     if features is None:
         print("No features extracted. Exiting.")
         return
+
+    dpmm_config["raw_sample_bytes"] = feature_extractor.raw_batch_bytes / max(1, len(features))
     
     # # Save extracted features for later analysis
     # features_save_path = Path(output_dir) / "extracted_features" / f"{dataset_name}_features.pt"

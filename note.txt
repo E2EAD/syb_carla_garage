@@ -19,6 +19,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 4.MoEv1.8: To be writen. Add distill loss for score head to maintain learned knowledge.
 5.xxA3D: first A3D, using speed and traj pred for advantage calcuation. backbone is frozen.
 6.xxA3D_v2: seperate traj and speed pred for advantage calcuation
+7.xxA3D_v25: more frozen, until pooling TF.
 
 
 #TODO

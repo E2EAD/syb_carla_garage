@@ -12,7 +12,6 @@ import os
 import pathlib
 import datetime
 import random
-from copy import deepcopy
 import jsonpickle
 import jsonpickle.ext.numpy as jsonpickle_numpy
 from collections import defaultdict
@@ -29,13 +28,14 @@ from torch.distributed.optim import ZeroRedundancyOptimizer
 import torch.multiprocessing as mp
 from diskcache import Cache
 import torchmetrics
-from collections import deque
 
 from config import GlobalConfig
-from my_model_QtdA3dHgs import LidarCenterNet
+from my_model_wTFFdeQtdA3D import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
+from forgetting_monitor import ForgettingMonitor
+from oracle_kd_loss import OracleKDLoss
 
 jsonpickle_numpy.register_handlers()
 jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
@@ -165,91 +165,6 @@ def load_teacher_from_dir(teacher_dir, device):
   teacher_model.eval()
   teacher_model.requires_grad_(False)
   return teacher_model, teacher_ckpt
-
-
-def _normalize_rows(x):
-  if x is None or x.numel() == 0:
-    return x
-  return x / x.norm(dim=1, keepdim=True).clamp_min(1e-8)
-
-
-def _topk_svd_bases(x, max_dim=64, energy=0.98):
-  """
-  x: (N, D), return row-wise orthonormal bases (R, D), R <= max_dim.
-  """
-  if x is None or x.numel() == 0 or x.shape[0] == 0:
-    return None
-  x = x.float()
-  if x.shape[0] == 1:
-    return _normalize_rows(x)
-  u, s, vh = torch.linalg.svd(x, full_matrices=False)
-  if s.numel() == 0:
-    return None
-  s2 = s * s
-  total = s2.sum().clamp_min(1e-8)
-  cum = torch.cumsum(s2, dim=0) / total
-  keep = int(torch.searchsorted(cum, torch.tensor(float(energy), device=x.device), right=False).item()) + 1
-  keep = max(1, min(int(max_dim), keep, vh.shape[0]))
-  bases = vh[:keep]
-  return _normalize_rows(bases)
-
-
-def _flatten_grad_vector(parameters):
-  vecs = []
-  for p in parameters:
-    if p.grad is None:
-      vecs.append(torch.zeros(p.numel(), device=p.device, dtype=p.dtype))
-    else:
-      vecs.append(p.grad.detach().reshape(-1))
-  return torch.cat(vecs, dim=0) if len(vecs) > 0 else None
-
-
-def _assign_grad_from_vector(parameters, vec):
-  if vec is None:
-    return
-  start = 0
-  for p in parameters:
-    numel = p.numel()
-    chunk = vec[start:start + numel].view_as(p).to(dtype=p.dtype)
-    if p.grad is None:
-      p.grad = chunk.clone()
-    else:
-      p.grad.copy_(chunk)
-    start += numel
-
-
-def _project_grad_off_bases(grad_vec, bases):
-  """
-  grad_vec: (D,), bases: (R, D) row-wise orthonormal
-  """
-  print('///// Projecting gradient off the bases. /////')
-  if grad_vec is None or bases is None or bases.numel() == 0:
-    return grad_vec
-  coeff = torch.matmul(bases, grad_vec)  # (R,)
-  proj = torch.matmul(coeff.unsqueeze(0), bases).squeeze(0)  # (D,)
-  print(f'Gradient norm before projection: {grad_vec.norm().item():.4f}, after projection: {(grad_vec - proj).norm().item():.4f}')  
-  return grad_vec - proj
-
-
-def _merge_bases(existing, new_bases, max_dim=100):
-  if new_bases is None or new_bases.numel() == 0:
-    return existing
-  if existing is None or existing.numel() == 0:
-    return _normalize_rows(new_bases[:max_dim])
-  # Remove components in span(existing) from new bases.
-  coeff = torch.matmul(existing, new_bases.t())  # (R_old, R_new)
-  proj = torch.matmul(existing.t(), coeff).t()  # (R_new, D)
-  resid = new_bases - proj
-  resid = _normalize_rows(resid)
-  valid = resid.norm(dim=1) > 1e-6
-  resid = resid[valid]
-  if resid.numel() == 0:
-    return existing[:max_dim]
-  combined = torch.cat([existing, resid], dim=0)
-  # Re-orthonormalize compactly.
-  q, _ = torch.linalg.qr(combined.t(), mode='reduced')  # (D, R)
-  merged = q.t()[:max_dim]
-  return _normalize_rows(merged)
 
 
 def _safe_kl(student_logits, teacher_logits, temperature):
@@ -621,7 +536,7 @@ def main():
                       help='compile mode for torch compile')
   parser.add_argument('--use_a3d',
                       type=int,
-                      default=int(config.use_a3d),
+                      default=0,
                       help='Enable Advantage-Anchored Adaptive Distillation (AAAD/A3D).')
   parser.add_argument('--a3d_ref_file',
                       type=str,
@@ -662,26 +577,58 @@ def main():
   parser.add_argument('--a3d_traj_kd_weight', type=float, default=float(config.a3d_traj_kd_weight))
   parser.add_argument('--a3d_speed_kd_weight', type=float, default=float(config.a3d_speed_kd_weight))
   parser.add_argument('--a3d_offset_kd_weight', type=float, default=float(config.a3d_offset_kd_weight))
-  parser.add_argument('--hgs_enable',
+  parser.add_argument('--use_oracle_kd',
                       type=int,
-                      default=int(getattr(config, 'hgs_enable', 0)),
-                      help='Enable Hybrid Gradient Surgery.')
-  parser.add_argument('--hgs_advantage_thresh',
-                      type=float,
-                      default=float(getattr(config, 'hgs_advantage_thresh', 0.1)))
-  parser.add_argument('--hgs_subspace_dim',
-                      type=int,
-                      default=int(getattr(config, 'hgs_subspace_dim', 64)))
-  parser.add_argument('--hgs_svd_energy',
-                      type=float,
-                      default=float(getattr(config, 'hgs_svd_energy', 0.98)))
-  parser.add_argument('--hgs_memory_file',
+                      default=int(getattr(config, 'use_oracle_kd', 1)),
+                      help='Enable Oracle Distribution KL training.')
+  parser.add_argument('--oracle_ref_file',
                       type=str,
-                      default=str(getattr(config, 'hgs_memory_file', '')),
-                      help='Optional path to load/save persistent HGS subspace memory.')
-  parser.add_argument('--hgs_basis_queue_size',
+                      default=str(getattr(config, 'oracle_ref_file', config.a3d_ref_file)),
+                      help='Frozen base model directory for Oracle KD. If empty, student-conditioned fallback is used.')
+  parser.add_argument('--oracle_traj_threshold',
+                      type=float,
+                      default=float(getattr(config, 'oracle_traj_threshold', 2.0)),
+                      help='Mean per-step L1 distance threshold in meters for correct trajectory anchors.')
+  parser.add_argument('--oracle_kd_traj_weight',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_traj_weight', 0.3)),
+                      help='Loss weight for trajectory oracle KL before global normalization.')
+  parser.add_argument('--oracle_kd_speed_weight',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_speed_weight', 0.2)),
+                      help='Loss weight for speed oracle KL before global normalization.')
+  parser.add_argument('--oracle_kd_traj_l1_weight',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_traj_l1_weight', 0.0)),
+                      help='Optional extra weight for top-1 trajectory L1 from Oracle KD.')
+  parser.add_argument('--oracle_kd_temperature',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_temperature', 1.0)),
+                      help='Temperature for Oracle KL.')
+  parser.add_argument('--min_correct_anchors',
                       type=int,
-                      default=int(getattr(config, 'hgs_basis_queue_size', 200)))
+                      default=int(getattr(config, 'min_correct_anchors', 1)),
+                      help='Minimum correct anchors per sample; nearest anchors are used as fallback.')
+  parser.add_argument('--use_forgetting_monitor',
+                      type=int,
+                      default=int(getattr(config, 'use_forgetting_monitor', 1)),
+                      help='Monitor forward KL against the frozen base policy during training.')
+  parser.add_argument('--monitor_kl_every',
+                      type=int,
+                      default=int(getattr(config, 'monitor_kl_every', 100)),
+                      help='Training steps between forgetting KL checks.')
+  parser.add_argument('--monitor_kl_batches',
+                      type=int,
+                      default=int(getattr(config, 'monitor_kl_batches', 3)),
+                      help='Number of batches used for each forgetting KL estimate.')
+  parser.add_argument('--kl_forgetting_threshold',
+                      type=float,
+                      default=float(getattr(config, 'kl_forgetting_threshold', 0.5)),
+                      help='Forward KL threshold that triggers LR reduction or early stop.')
+  parser.add_argument('--kl_patience',
+                      type=int,
+                      default=int(getattr(config, 'kl_patience', 3)),
+                      help='Consecutive KL-threshold exceedances before early stopping.')
 
   args = parser.parse_args()
   args.logdir = os.path.join(args.logdir, args.id)
@@ -758,6 +705,9 @@ def main():
     config.detailed_loss_weights['loss_a3d_traj_kd'] = 0.0
     config.detailed_loss_weights['loss_a3d_speed_kd'] = 0.0
     config.detailed_loss_weights['loss_a3d_offset_kd'] = 0.0
+    config.detailed_loss_weights['loss_traj_oracle_kl'] = 0.0
+    config.detailed_loss_weights['loss_speed_oracle_kl'] = 0.0
+    config.detailed_loss_weights['loss_traj_l1'] = 0.0
 
   if not config.use_wp_gru:
     config.detailed_loss_weights['loss_wp'] = 0.0
@@ -785,6 +735,15 @@ def main():
     config.detailed_loss_weights['loss_a3d_traj_kd'] = 0.0
     config.detailed_loss_weights['loss_a3d_speed_kd'] = 0.0
     config.detailed_loss_weights['loss_a3d_offset_kd'] = 0.0
+
+  if bool(config.use_oracle_kd) and (not config.use_plant) and bool(config.use_controller_input_prediction):
+    config.detailed_loss_weights['loss_traj_oracle_kl'] = float(config.oracle_kd_traj_weight)
+    config.detailed_loss_weights['loss_speed_oracle_kl'] = float(config.oracle_kd_speed_weight)
+    config.detailed_loss_weights['loss_traj_l1'] = float(config.oracle_kd_traj_l1_weight)
+  else:
+    config.detailed_loss_weights['loss_traj_oracle_kl'] = 0.0
+    config.detailed_loss_weights['loss_speed_oracle_kl'] = 0.0
+    config.detailed_loss_weights['loss_traj_l1'] = 0.0
 
   # Not possible to predicted in a principled way from a single frame
   if config.lidar_seq_len == 1 and config.seq_len == 1:
@@ -884,22 +843,23 @@ def main():
 
 
   if config.freeze_backbone:
+    print('***** Freeze Backbone *****')
     model.backbone.requires_grad_(False)
 
-    # Keep transformer_decoder_join input distribution stable by freezing
-    # sensor/token projection encoders that are concatenated into fused_features.
-    if hasattr(model, 'extra_sensor_encoder'):
-      model.extra_sensor_encoder.requires_grad_(False)
-    if hasattr(model, 'velocity_normalization'):
-      model.velocity_normalization.requires_grad_(False)
-    if hasattr(model, 'tp_encoder'):
-      model.tp_encoder.requires_grad_(False)
-    if hasattr(model, 'change_channel'):
-      model.change_channel.requires_grad_(False)
-    if hasattr(model, 'extra_sensor_pos_embed'):
-      model.extra_sensor_pos_embed.requires_grad = False
-    if hasattr(model, 'tp_pos_embed'):
-      model.tp_pos_embed.requires_grad = False
+    # # Keep transformer_decoder_join input distribution stable by freezing
+    # # sensor/token projection encoders that are concatenated into fused_features.
+    # if hasattr(model, 'extra_sensor_encoder'):
+    #   model.extra_sensor_encoder.requires_grad_(False)
+    # if hasattr(model, 'velocity_normalization'):
+    #   model.velocity_normalization.requires_grad_(False)
+    # if hasattr(model, 'tp_encoder'):
+    #   model.tp_encoder.requires_grad_(False)
+    # if hasattr(model, 'change_channel'):
+    #   model.change_channel.requires_grad_(False)
+    # if hasattr(model, 'extra_sensor_pos_embed'):
+    #   model.extra_sensor_pos_embed.requires_grad = False
+    # if hasattr(model, 'tp_pos_embed'):
+    #   model.tp_pos_embed.requires_grad = False
 
     if config.detect_boxes:
       model.head.requires_grad_(False)
@@ -936,13 +896,21 @@ def main():
     print('Compiled model')
 
   teacher_model = None
-  if bool(config.use_a3d):
-    if config.a3d_ref_file is None or str(config.a3d_ref_file).strip() == '':
-      raise ValueError('A3D is enabled but --a3d_ref_file is empty.')
-    teacher_model, teacher_ckpt = load_teacher_from_dir(config.a3d_ref_file, device)
+  teacher_dir = config.a3d_ref_file if bool(config.use_a3d) else getattr(config, 'oracle_ref_file', '')
+  needs_teacher = (
+      bool(config.use_a3d) or
+      bool(getattr(config, 'use_forgetting_monitor', 0)) or
+      (bool(getattr(config, 'use_oracle_kd', 0)) and str(getattr(config, 'oracle_ref_file', '')).strip() != '')
+  )
+  if needs_teacher and str(teacher_dir).strip() != '':
+    teacher_model, teacher_ckpt = load_teacher_from_dir(teacher_dir, device)
     if rank == 0:
-      print(f'Loading frozen A3D teacher dir: {config.a3d_ref_file}', flush=True)
+      print(f'Loading frozen base teacher dir: {teacher_dir}', flush=True)
       print(f'Teacher checkpoint selected: {teacher_ckpt}', flush=True)
+  elif bool(config.use_a3d):
+    raise ValueError('A3D is enabled but --a3d_ref_file is empty.')
+  elif bool(getattr(config, 'use_forgetting_monitor', 0)):
+    raise ValueError('Forgetting monitor is enabled but --oracle_ref_file is empty.')
 
   if bool(args.zero_redundancy_optimizer):
     # Saves GPU memory during DDP training
@@ -1047,11 +1015,30 @@ def main():
     trainer.train()
     torch.cuda.empty_cache()
 
-    if ((args.setting != 'all') and (epoch % args.val_every == 0)):
+    if trainer.forgetting_monitor is not None and not trainer.should_stop:
+      action, kl_metrics = trainer.forgetting_monitor.check_and_act(
+          trainer.model,
+          trainer.dataloader_train,
+          trainer.device,
+          trainer.step,
+      )
+      if rank == 0 and writer is not None:
+        for key, value in kl_metrics.items():
+          writer.add_scalar(f'monitor/{key}', value, trainer.cur_epoch)
+        if action != 'continue':
+          writer.add_text('monitor/action', action, trainer.cur_epoch)
+      if action == 'reduce_lr':
+        for param_group in optimizer.param_groups:
+          param_group['lr'] *= 0.5
+      elif action == 'early_stop':
+        trainer.should_stop = True
+      trainer.model.train()
+
+    if (not trainer.should_stop) and ((args.setting != 'all') and (epoch % args.val_every == 0)):
       trainer.validate()
       torch.cuda.empty_cache()
 
-    if not config.use_cosine_schedule:
+    if (not trainer.should_stop) and (not config.use_cosine_schedule):
       scheduler.step()
 
     if bool(args.zero_redundancy_optimizer):
@@ -1059,6 +1046,11 @@ def main():
       optimizer.consolidate_state_dict(0)
     if rank == 0:
       trainer.save()
+
+    if trainer.should_stop:
+      if rank == 0:
+        print('Stopping early because forgetting monitor requested early_stop.', flush=True)
+      break
 
     trainer.cur_epoch += 1
 
@@ -1104,23 +1096,19 @@ class Engine(object):
     self.scheduler = scheduler
     self.iters_per_epoch = len(self.dataloader_train)
     self.scaler = scaler
+    self.should_stop = False
 
     if self.config.debug:
       pathlib.Path(self.vis_save_path).mkdir(parents=True, exist_ok=True)
 
     self.detailed_loss_weights = config.detailed_loss_weights
+    self.oracle_loss_fn = OracleKDLoss(config, base_model=teacher_model) if (
+        bool(getattr(config, 'use_oracle_kd', 0)) and not config.use_plant) else None
+    self.forgetting_monitor = ForgettingMonitor(teacher_model, config) if (
+        bool(getattr(config, 'use_forgetting_monitor', 0)) and teacher_model is not None and not config.use_plant) else None
     self.a3d_lambda_ema = 0.0
     self.a3d_traj_lambda_ema = 0.0
     self.a3d_speed_lambda_ema = 0.0
-    self.hgs_enable = bool(getattr(config, 'hgs_enable', 0))
-    self.hgs_advantage_thresh = float(getattr(config, 'hgs_advantage_thresh', 0.1))
-    self.hgs_subspace_dim = int(getattr(config, 'hgs_subspace_dim', 64))
-    self.hgs_svd_energy = float(getattr(config, 'hgs_svd_energy', 0.98))
-    self.hgs_memory_file = str(getattr(config, 'hgs_memory_file', '') or '')
-    self.hgs_basis_queue_size = int(getattr(config, 'hgs_basis_queue_size', 200))
-    self.hgs_layer_prefixes = tuple(getattr(config, 'hgs_layer_prefixes', ['join.', 'query_traj_decoder.', 'target_speed_network.']))
-    self.hgs_persistent_bases = {}
-    self.hgs_basis_queue = defaultdict(lambda: deque(maxlen=self.hgs_basis_queue_size))
     self.a3d_monitor_tags = {
         'a3d_traj_advantage': 'traj_a_rel',
         'a3d_traj_ref_score': 'traj_ref_acc',
@@ -1136,164 +1124,13 @@ class Engine(object):
         'a3d_speed_lambda_kd': 'speed_lambda_kd',
         'a3d_lambda': 'lambda_kd_avg',
     }
-    self.hgs_monitor_tags = {
-        'hgs_adv_ratio': 'adv_ratio',
-        'hgs_batch_basis_rank': 'batch_rank',
-        'hgs_persistent_basis_rank': 'memory_rank',
-        'hgs_proj_ratio': 'proj_ratio',
+    self.oracle_monitor_tags = {
+        'loss_traj_oracle_kl': 'traj_kl',
+        'loss_speed_oracle_kl': 'speed_kl',
+        'loss_traj_l1': 'traj_l1',
+        'speed_acc': 'speed_acc',
+        'oracle_correct_anchor_rate': 'correct_anchor_rate',
     }
-    self._hgs_trainable_param_cache = None
-    if self.hgs_enable and self.hgs_memory_file and os.path.isfile(self.hgs_memory_file):
-      try:
-        payload = torch.load(self.hgs_memory_file, map_location='cpu')
-        loaded = payload.get('subspace_memory', payload)
-        for k, v in loaded.items():
-          if isinstance(v, torch.Tensor) and v.numel() > 0:
-            self.hgs_persistent_bases[k] = _normalize_rows(v.float().to(self.device))
-      except Exception as exc:  # pylint: disable=broad-exception-caught
-        if self.rank == 0:
-          print(f'Failed to load HGS memory from {self.hgs_memory_file}: {exc}', flush=True)
-
-  def _collect_hgs_trainable_named_params(self):
-    if self._hgs_trainable_param_cache is not None:
-      return self._hgs_trainable_param_cache
-    named = []
-    for name, p in self.model.module.named_parameters():
-      if not p.requires_grad:
-        continue
-      if any(name.startswith(prefix) for prefix in self.hgs_layer_prefixes):
-        named.append((name, p))
-    self._hgs_trainable_param_cache = named
-    return named
-
-  def _compute_hgs_adv_loss(self, hgs_ctx):
-    if hgs_ctx is None:
-      return None, {'hgs_adv_ratio': 0.0}
-    teacher_tensors = hgs_ctx.get('teacher_tensors')
-    student_tensors = hgs_ctx.get('student_tensors')
-    checkpoint = hgs_ctx.get('checkpoint')
-    target_speed = hgs_ctx.get('target_speed')
-    if teacher_tensors is None or student_tensors is None or checkpoint is None or target_speed is None:
-      return None, {'hgs_adv_ratio': 0.0}
-
-    t_traj_score = _compute_traj_score(
-        teacher_tensors.get('pred_trajectories'),
-        teacher_tensors.get('traj_probs'),
-        checkpoint,
-        self.config,
-    )
-    s_traj_score = _compute_traj_score(
-        student_tensors.get('pred_trajectories'),
-        student_tensors.get('traj_probs'),
-        checkpoint,
-        self.config,
-    )
-    t_speed_acc = _compute_speed_acc_from_logits(teacher_tensors.get('speed_logits'), target_speed)
-    s_speed_acc = _compute_speed_acc_from_logits(student_tensors.get('speed_logits'), target_speed)
-    if t_traj_score is None or s_traj_score is None or t_speed_acc is None or s_speed_acc is None:
-      return None, {'hgs_adv_ratio': 0.0}
-
-    adv = self.config.a3d_w_traj * (t_traj_score - s_traj_score) + self.config.a3d_w_speed * (t_speed_acc - s_speed_acc)
-    # Keep only well-performed reference samples (teacher-good) for HGS.
-    ref_score = self.config.a3d_w_traj * t_traj_score + self.config.a3d_w_speed * t_speed_acc
-    teacher_good = ref_score >= float(getattr(self.config, 'a3d_tau', 0.6))
-    adv_mask = (adv > float(self.hgs_advantage_thresh)) & teacher_good
-    adv_ratio = float(adv_mask.float().mean().item())
-    if int(adv_mask.sum().item()) == 0:
-      return None, {'hgs_adv_ratio': adv_ratio}
-
-    t_kd = self.config.a3d_kd_temperature
-    s_traj_logits = student_tensors['traj_logits'].transpose(0, 1)
-    t_traj_logits = teacher_tensors['traj_logits'].transpose(0, 1).detach()
-    t_traj_prob = F.softmax(t_traj_logits / t_kd, dim=-1).detach()
-    s_traj = student_tensors['pred_trajectories'].permute(1, 0, 2, 3)
-    t_traj = teacher_tensors['pred_trajectories'].permute(1, 0, 2, 3).detach()
-    t_prob_on_s, _ = _align_teacher_traj_prob_to_student(s_traj, t_traj, t_traj_prob)
-
-    s_speed_logits = student_tensors['speed_logits']
-    t_speed_logits = teacher_tensors['speed_logits'].detach()
-
-    loss_adv_traj = _safe_kl_with_target_probs(s_traj_logits[adv_mask], t_prob_on_s[adv_mask], t_kd)
-    loss_adv_speed = _safe_kl(s_speed_logits[adv_mask], t_speed_logits[adv_mask], t_kd)
-    adv_loss = self.config.a3d_traj_kd_weight * loss_adv_traj + self.config.a3d_speed_kd_weight * loss_adv_speed
-    return adv_loss, {'hgs_adv_ratio': adv_ratio}
-
-  def _build_hgs_instant_layer_bases_from_adv_loss(self, adv_loss):
-    if (adv_loss is None) or (not self.hgs_enable):
-      return None, {'hgs_batch_basis_rank': 0.0}
-    named_params = self._collect_hgs_trainable_named_params()
-    if len(named_params) == 0:
-      return None, {'hgs_batch_basis_rank': 0.0}
-    params = [p for _, p in named_params]
-    grads = torch.autograd.grad(adv_loss, params, retain_graph=True, allow_unused=True)
-    layer_bases = {}
-    rank = 0
-    for (name, _), g in zip(named_params, grads):
-      if g is None:
-        continue
-      basis = _normalize_rows(g.detach().reshape(1, -1))
-      if basis is None or basis.numel() == 0:
-        continue
-      layer_bases[name] = basis
-      rank += int(basis.shape[0])
-    return layer_bases, {'hgs_batch_basis_rank': float(rank)}
-
-  def _apply_hgs_projection_layerwise(self, instant_layer_bases):
-    print('///// Applying HGS projection with instant_layer_bases and persistent memory. /////')
-    named_params = self._collect_hgs_trainable_named_params()
-    if len(named_params) == 0:
-      return 0.0, 0.0
-    total_before = 0.0
-    total_after = 0.0
-    mem_rank = 0.0
-    for name, p in named_params:
-      if p.grad is None:
-        continue
-      g = p.grad.detach().reshape(-1)
-      g0 = float(g.norm().item())
-      if g0 <= 1e-12:
-        continue
-      persistent_basis = self.hgs_persistent_bases.get(name)
-      if persistent_basis is not None:
-        mem_rank += float(persistent_basis.shape[0])
-      g_proj = _project_grad_off_bases(g, persistent_basis)
-      instant_basis = None if (instant_layer_bases is None) else instant_layer_bases.get(name)
-      g_proj = _project_grad_off_bases(g_proj, instant_basis)
-      p.grad.copy_(g_proj.view_as(p.grad))
-      g1 = float(g_proj.norm().item())
-      total_before += g0
-      total_after += g1
-
-    if total_before <= 1e-12:
-      return 0.0, mem_rank
-    proj_ratio = max(0.0, min(1.0, (total_before - total_after) / total_before))
-    return proj_ratio, mem_rank
-
-  def _update_hgs_memory_from_layer_bases(self, layer_bases):
-    if layer_bases is None:
-      return
-    for name, basis in layer_bases.items():
-      if basis is None or basis.numel() == 0:
-        continue
-      self.hgs_basis_queue[name].append(_normalize_rows(basis.detach().to(device=self.device)))
-
-  def consolidate_hgs_memory(self):
-    if not self.hgs_enable:
-      return
-    named_params = self._collect_hgs_trainable_named_params()
-    for name, _ in named_params:
-      q = self.hgs_basis_queue[name]
-      if len(q) == 0:
-        continue
-      stacked = torch.cat(list(q), dim=0)
-      new_basis = _topk_svd_bases(stacked, max_dim=self.hgs_subspace_dim, energy=self.hgs_svd_energy)
-      merged = _merge_bases(self.hgs_persistent_bases.get(name), new_basis, max_dim=self.hgs_subspace_dim)
-      if merged is not None:
-        self.hgs_persistent_bases[name] = merged
-    if self.rank == 0 and self.hgs_memory_file:
-      os.makedirs(os.path.dirname(self.hgs_memory_file), exist_ok=True) if os.path.dirname(self.hgs_memory_file) else None
-      cpu_mem = {k: v.detach().cpu() for k, v in self.hgs_persistent_bases.items()}
-      torch.save({'subspace_memory': cpu_mem, 'epoch': self.cur_epoch}, self.hgs_memory_file)
 
   def load_data_compute_loss(self, data, validation=False):
     # Validation = True will compute additional metrics not used for optimization
@@ -1434,6 +1271,9 @@ class Engine(object):
                             pred_wp_1=pred_wp_1,
                             selected_path=selected_path)
 
+    metrics = {}
+    teacher_tensors_for_oracle = None
+
     # A3D adaptive KD is applied only during training, with a frozen teacher.
     if bool(self.config.use_a3d) and (self.teacher_model is not None) and (not validation) and (not self.config.use_plant):
       with torch.no_grad():
@@ -1444,6 +1284,7 @@ class Engine(object):
                                command=command,
                                target_point_next=target_point_next if self.config.two_tp_input else None)
         teacher_tensors = self.teacher_model.latest_distill_tensors
+        teacher_tensors_for_oracle = teacher_tensors
 
       student_tensors = self.model.module.latest_distill_tensors
       if teacher_tensors is not None and student_tensors is not None:
@@ -1553,8 +1394,32 @@ class Engine(object):
                                                         dtype=loss_speed_kd.dtype)
           losses['a3d_speed_lambda_kd'] = torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype)
 
+    if self.oracle_loss_fn is not None and (not validation) and (not self.config.use_plant):
+      base_tensors = None
+      if self.teacher_model is not None:
+        if teacher_tensors_for_oracle is None:
+          with torch.no_grad():
+            _ = self.teacher_model(rgb=rgb,
+                                   lidar_bev=lidar,
+                                   target_point=target_point,
+                                   ego_vel=ego_vel,
+                                   command=command,
+                                   target_point_next=target_point_next if self.config.two_tp_input else None)
+            teacher_tensors_for_oracle = self.teacher_model.latest_distill_tensors
+        base_tensors = teacher_tensors_for_oracle
+
+      oracle_losses = self.oracle_loss_fn(
+          student_tensors=self.model.module.latest_distill_tensors,
+          gt_data=data,
+          base_tensors=base_tensors,
+      )
+      for key, value in oracle_losses.items():
+        if key.startswith('loss_'):
+          losses[key] = value
+        else:
+          metrics[key] = float(value.detach().item())
+
     # Compute metrics for logging
-    metrics = {}
     if validation:
       if self.config.use_semantic and not self.config.use_plant:
         ss_miou = torchmetrics.functional.jaccard_index(pred_semantic,
@@ -1607,15 +1472,7 @@ class Engine(object):
                         gt_bev_semantic=bev_semantic_label,
                         gt_speed=ego_vel)
 
-    hgs_context = None
-    if (not validation) and bool(self.hgs_enable):
-      hgs_context = {
-          'teacher_tensors': teacher_tensors if 'teacher_tensors' in locals() else None,
-          'student_tensors': student_tensors if 'student_tensors' in locals() else None,
-          'checkpoint': checkpoint if 'checkpoint' in locals() else None,
-          'target_speed': target_speed if 'target_speed' in locals() else None,
-      }
-    return losses, metrics, hgs_context
+    return losses, metrics
 
   def train(self):
     self.model.train()
@@ -1625,19 +1482,21 @@ class Engine(object):
     detailed_losses_epoch = {key: 0.0 for key in self.detailed_loss_weights}
     a3d_monitor_sum = defaultdict(float)
     a3d_monitor_count = defaultdict(int)
-    hgs_monitor_sum = defaultdict(float)
-    hgs_monitor_count = defaultdict(int)
+    oracle_monitor_sum = defaultdict(float)
+    oracle_monitor_count = defaultdict(int)
     self.optimizer.zero_grad(set_to_none=False)
 
     # Train loop
     for i, data in enumerate(tqdm(self.dataloader_train, disable=self.rank != 0)):
 
       with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=bool(self.config.use_amp)):
-        losses, _, hgs_context = self.load_data_compute_loss(data, validation=False)
+        losses, metrics = self.load_data_compute_loss(data, validation=False)
         loss = torch.zeros(1, dtype=torch.float32, device=self.device)
 
         for key, value in losses.items():
           if key not in self.detailed_loss_weights:
+            continue
+          if self.detailed_loss_weights[key] is None:
             continue
           if self.config.learn_multi_task_weights:
             precision = torch.exp(-self.detailed_loss_weights[key])
@@ -1653,28 +1512,21 @@ class Engine(object):
             a3d_monitor_sum[loss_key] += scalar_value
             a3d_monitor_count[loss_key] += 1
 
-        instant_layer_bases = None
-        if self.hgs_enable:
-          adv_loss, adv_stats = self._compute_hgs_adv_loss(hgs_context)
-          instant_layer_bases, basis_stats = self._build_hgs_instant_layer_bases_from_adv_loss(adv_loss)
-          for k, v in {**adv_stats, **basis_stats}.items():
-            hgs_monitor_sum[k] += float(v)
-            hgs_monitor_count[k] += 1
+        for loss_key, short_tag in self.oracle_monitor_tags.items():
+          if loss_key in losses:
+            scalar_value = float(losses[loss_key].detach().item())
+          elif loss_key in metrics:
+            scalar_value = float(metrics[loss_key])
+          else:
+            continue
+          oracle_monitor_sum[loss_key] += scalar_value
+          oracle_monitor_count[loss_key] += 1
 
       self.scaler.scale(loss).backward()
-      if self.hgs_enable:
-        self.scaler.unscale_(self.optimizer)
-        proj_ratio, mem_rank = self._apply_hgs_projection_layerwise(instant_layer_bases)
-        hgs_monitor_sum['hgs_proj_ratio'] += float(proj_ratio)
-        hgs_monitor_count['hgs_proj_ratio'] += 1
-        hgs_monitor_sum['hgs_persistent_basis_rank'] += float(mem_rank)
-        hgs_monitor_count['hgs_persistent_basis_rank'] += 1
-        self._update_hgs_memory_from_layer_bases(instant_layer_bases)
 
       if self.config.use_grad_clip:
         # Unscales the gradients of optimizers assigned params in-place
-        if not self.hgs_enable:
-          self.scaler.unscale_(self.optimizer)
+        self.scaler.unscale_(self.optimizer)
         # Since the gradients of optimizers assigned params are now unscaled, we can clip as usual.
         torch.nn.utils.clip_grad_norm_(self.model.parameters(),
                                        max_norm=int(self.config.grad_clip_max_norm),
@@ -1699,11 +1551,10 @@ class Engine(object):
         if a3d_monitor_count[loss_key] > 0:
           avg_value = a3d_monitor_sum[loss_key] / float(a3d_monitor_count[loss_key])
           self.writer.add_scalar(f'epoch/a3d_{short_tag}', avg_value, self.cur_epoch)
-      for loss_key, short_tag in self.hgs_monitor_tags.items():
-        if hgs_monitor_count[loss_key] > 0:
-          avg_value = hgs_monitor_sum[loss_key] / float(hgs_monitor_count[loss_key])
-          self.writer.add_scalar(f'epoch/hgs_{short_tag}', avg_value, self.cur_epoch)
-    self.consolidate_hgs_memory()
+      for loss_key, short_tag in self.oracle_monitor_tags.items():
+        if oracle_monitor_count[loss_key] > 0:
+          avg_value = oracle_monitor_sum[loss_key] / float(oracle_monitor_count[loss_key])
+          self.writer.add_scalar(f'epoch/oracle_{short_tag}', avg_value, self.cur_epoch)
 
   @torch.inference_mode()
   def validate(self):
@@ -1715,12 +1566,14 @@ class Engine(object):
 
     # Evaluation loop loop
     for data in tqdm(self.dataloader_val, disable=self.rank != 0):
-      losses, metrics, _ = self.load_data_compute_loss(data, validation=True)
+      losses, metrics = self.load_data_compute_loss(data, validation=True)
 
       loss = torch.zeros(1, dtype=torch.float32, device=self.device)
 
       for key, value in losses.items():
         if key not in self.detailed_loss_weights:
+          continue
+        if self.detailed_loss_weights[key] is None:
           continue
         if self.config.learn_multi_task_weights:
           precision = torch.exp(-self.detailed_loss_weights[key])

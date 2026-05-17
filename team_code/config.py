@@ -516,10 +516,13 @@ class GlobalConfig:
         'loss_selection': 0.0,
         'loss_task_encoder_kl' : 1e-7,  # KL损失的权重
         'loss_task_encoder_recon' : 1.0,  # 重建损失的权重
-        'loss_a3d_total': 0.0,
-        'loss_a3d_traj_kd': 0.0,
-        'loss_a3d_speed_kd': 0.0,
-        'loss_a3d_offset_kd': 0.0,
+        'loss_a3d_total': 1.0,
+        'loss_a3d_traj_kd': 1.0,
+        'loss_a3d_speed_kd': 1.0,
+        'loss_a3d_offset_kd': 1.0,
+        'loss_traj_oracle_kl': 0.3,
+        'loss_speed_oracle_kl': 0.2,
+        'loss_traj_l1': 0.0,
         # 'loss_task_encoder_anchor': 0.05,
         # 'task_encoder/avg_alignment_distance': 1,
         # 'task_encoder/avg_max_prob': 1,
@@ -865,8 +868,11 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/0-0-0-31077-tracked_clusters.json"  # run under project root
-    self.selected_ability = 'Emergency_Brake' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.prior_traj_path = "./team_code/kmeans_results/latest/track_cluster_log/all_abilities-tracked_clusters.json"  # run under project root
+    self.use_random_query_tokens = False
+    self.random_query_traj_num_queries = 99
+    self.random_query_fuse_feat_num_queries = 24
+    self.selected_ability = 'Traffic_Sign' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
     # self.score_loss_weight = 1
@@ -886,13 +892,13 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # A3D / AAAD continual distillation
     # -----------------------------------------------------------------------------
-    self.use_a3d = False
-    self.a3d_ref_file = None
+    self.use_a3d = 0
+    self.a3d_ref_file = '/home/spc/syb_carla_garage/log/syb_QtdA3D_v2_0-eb_2stg'
     # Branch-wise adaptive gating (trajectory and speed are gated separately).
     self.a3d_traj_beta = 5.0
     self.a3d_speed_beta = 5.0
-    self.a3d_traj_tau = 0.9
-    self.a3d_speed_tau = 0.9
+    self.a3d_traj_tau = 0.6
+    self.a3d_speed_tau = 0.6
     self.a3d_traj_lambda_max = 0.6
     self.a3d_speed_lambda_max = 0.6
     self.a3d_traj_lambda_ema = 0.8
@@ -900,7 +906,7 @@ class GlobalConfig:
 
     # Legacy shared knobs for backward compatibility (kept for older scripts).
     self.a3d_beta = 5.0
-    self.a3d_tau = 0.9
+    self.a3d_tau = 0.6
     self.a3d_traj_threshold = 30.0
     self.a3d_lambda_max = 0.6
     self.a3d_lambda_ema = 0.8
@@ -911,11 +917,29 @@ class GlobalConfig:
     self.a3d_traj_kd_weight = 1.0
     self.a3d_speed_kd_weight = 1.0
     self.a3d_offset_kd_weight = 0.5
+
+    # -----------------------------------------------------------------------------
+    # Oracle Distribution KD continual training
+    # -----------------------------------------------------------------------------
+    self.use_oracle_kd = 1
+    self.oracle_ref_file = self.a3d_ref_file
+    self.oracle_traj_threshold = 2.0
+    self.oracle_kd_traj_weight = 0.3
+    self.oracle_kd_speed_weight = 0.2
+    self.oracle_kd_traj_l1_weight = 0.0
+    self.oracle_kd_temperature = 1.0
+    self.min_correct_anchors = 1
+
+    self.use_forgetting_monitor = 1
+    self.monitor_kl_every = 1000
+    self.monitor_kl_batches = 3
+    self.kl_forgetting_threshold = 1.0
+    self.kl_patience = 3
     # -----------------------------------------------------------------------------
     # HGS (Hybrid Gradient Surgery) on top of A3D
     # -----------------------------------------------------------------------------
     self.hgs_enable = 0
-    self.hgs_advantage_thresh = 0.1
+    self.hgs_advantage_thresh = 0.01
     self.hgs_subspace_dim = 64
     self.hgs_svd_energy = 0.98
     self.hgs_memory_file = ''
@@ -970,9 +994,9 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Fuse feat front door encoder and anchor
     # -----------------------------------------------------------------------------
-    self.use_traj_front_door_encoder = False
-    self.use_prior_fuseFeat = False
-    self.prior_fuseFeat_path = []
+    self.use_traj_front_door_encoder = 0
+    self.use_prior_fuseFeat = 0
+    self.prior_fuseFeat_path = ["./team_code/kmeans_results/latest/tracked_clusters/all_abilities-tracked_clusters.pkl"]
     self.ff_de_dim = 256  # 速度编码器维度
     self.ff_num_heads = 8  # 注意力头数
     self.ff_dropout = 0.1  # dropout率

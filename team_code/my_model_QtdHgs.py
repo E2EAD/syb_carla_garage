@@ -21,12 +21,9 @@ import os
 from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
-from my_query_traj_decoder_v15 import PlanningTrajectoryDecoder as AnchorPlanningTrajectoryDecoder
-from my_query_traj_decoder_random import PlanningTrajectoryDecoder as RandomPlanningTrajectoryDecoder
-from traj_front_door_encoder import TrajFrontDoorEncoder as AnchorTrajFrontDoorEncoder
-from traj_front_door_encoder_random import TrajFrontDoorEncoder as RandomTrajFrontDoorEncoder
-from fuseFeat_front_door_encoder import FuseFeatFrontDoorEncoder as AnchorFuseFeatFrontDoorEncoder
-from fuseFeat_front_door_encoder_random import FuseFeatFrontDoorEncoder as RandomFuseFeatFrontDoorEncoder
+from my_query_traj_decoder_v15 import PlanningTrajectoryDecoder
+from traj_front_door_encoder import TrajFrontDoorEncoder
+from fuseFeat_front_door_encoder import FuseFeatFrontDoorEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -37,7 +34,12 @@ class LidarCenterNet(nn.Module):
   def __init__(self, config):
     super().__init__()
     self.config = config
+    # A3D variant: front-door encoders are disabled by design.
+    self.config.use_traj_front_door_encoder = False
+    self.config.use_prior_fuseFeat = False
     self.lateral_pid_controller = LateralPIDController(self.config)
+    self.latest_distill_tensors = None
+    self.latest_hgs_tensors = None
 
     self.speed_histogram = []
     self.make_histogram = int(os.environ.get('HISTOGRAM', 0))
@@ -191,10 +193,6 @@ class LidarCenterNet(nn.Module):
         #                                                             hidden_size=self.config.gru_hidden_size,
         #                                                             waypoints=self.config.predict_checkpoint_len,
         #                                                             target_point_size=target_point_size)
-          PlanningTrajectoryDecoder = RandomPlanningTrajectoryDecoder if self.config.use_random_query_tokens else AnchorPlanningTrajectoryDecoder
-          TrajFrontDoorEncoder = RandomTrajFrontDoorEncoder if self.config.use_random_query_tokens else AnchorTrajFrontDoorEncoder
-          FuseFeatFrontDoorEncoder = RandomFuseFeatFrontDoorEncoder if self.config.use_random_query_tokens else AnchorFuseFeatFrontDoorEncoder
-
           self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
 
           if self.config.use_traj_front_door_encoder:
@@ -233,10 +231,6 @@ class LidarCenterNet(nn.Module):
         #                                                             pred_len=self.config.predict_checkpoint_len,
         #                                                             hidden_size=self.config.gru_hidden_size,
         #                                                             target_point_size=target_point_size)
-          PlanningTrajectoryDecoder = RandomPlanningTrajectoryDecoder if self.config.use_random_query_tokens else AnchorPlanningTrajectoryDecoder
-          TrajFrontDoorEncoder = RandomTrajFrontDoorEncoder if self.config.use_random_query_tokens else AnchorTrajFrontDoorEncoder
-          FuseFeatFrontDoorEncoder = RandomFuseFeatFrontDoorEncoder if self.config.use_random_query_tokens else AnchorFuseFeatFrontDoorEncoder
-
           self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
 
           if self.config.use_traj_front_door_encoder:
@@ -333,6 +327,7 @@ class LidarCenterNet(nn.Module):
     attention_weights = None
     pred_wp_1 = None
     selected_path = None
+    distill_tensors = {}
 
     if self.config.use_wp_gru or self.config.use_controller_input_prediction:  # False or 0/1
       if self.config.transformer_decoder_join:  # True (use a transformer decoder)
@@ -380,7 +375,7 @@ class LidarCenterNet(nn.Module):
         if self.config.use_controller_input_prediction:  # 0 or 1
           self.last_joined_features = None
 
-          if self.config.tp_attention or False:  # 0
+          if self.config.tp_attention:  
             tp_token = self.tp_encoder(target_point)
             tp_token = tp_token + self.tp_pos_embed
             # print_data_info(tp_token)  # torch.Size([2, 256])
@@ -403,6 +398,7 @@ class LidarCenterNet(nn.Module):
             # print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
 
           self.last_joined_features = joined_checkpoint_features
+          distill_tensors['bev_tokens'] = joined_checkpoint_features
 
           if self.config.use_prior_fuseFeat:
             aug_joined_checkpoint_features, _ = self.fuseFeat_frontdoor_encoder(joined_checkpoint_features)
@@ -439,6 +435,9 @@ class LidarCenterNet(nn.Module):
           pred_traj_logits = scores - scores.max(dim=0, keepdim=True)[0]
           pred_traj_probs = F.softmax(pred_traj_logits, dim=0)
           pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)  # here we have pred traj probs
+          distill_tensors['traj_logits'] = pred_traj_logits
+          distill_tensors['traj_probs'] = pred_traj_probs
+          distill_tensors['pred_trajectories'] = pred_trajectories
 
           if self.config.input_path_to_target_speed_network:  # 0
             ts_input = torch.cat(
@@ -447,6 +446,7 @@ class LidarCenterNet(nn.Module):
           else:
             pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
             # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+          distill_tensors['speed_logits'] = pred_target_speed
 
       else:
         joined_features = self.join(fused_features)
@@ -465,6 +465,13 @@ class LidarCenterNet(nn.Module):
           else:
             pred_target_speed = self.target_speed_network(target_speed_features) 
             
+    self.latest_distill_tensors = distill_tensors if len(distill_tensors) > 0 else None
+    self.latest_hgs_tensors = None
+    if len(distill_tensors) > 0:
+      joined_tokens = distill_tensors.get('bev_tokens')
+      if joined_tokens is not None:
+        # Save graph-connected bottleneck features for HGS Jacobian extraction.
+        self.latest_hgs_tensors = {'bev_tokens': joined_tokens}
 
     # Auxiliary tasks
     pred_semantic = None
