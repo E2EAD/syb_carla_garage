@@ -34,7 +34,7 @@ from my_model_wTFFdeQtdA3D import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
-from forgetting_monitor import ForgettingMonitor
+from forgetting_monitor_v2 import ForgettingMonitor
 from oracle_kd_loss import OracleKDLoss
 
 jsonpickle_numpy.register_handlers()
@@ -781,7 +781,7 @@ def main():
       config.detailed_loss_weights[k] = config.detailed_loss_weights[k] * factor
 
   # Data, configures config. Create before the model
-  train_set = Ability_CARLA_Data(root=config.dataset_root,
+  train_set = Ability_CARLA_Data(root=config.mini_dataset_root,
                          config=config,
                          estimate_class_distributions=config.estimate_class_distributions,
                          estimate_sem_distribution=config.estimate_semantic_distribution,
@@ -1015,25 +1015,6 @@ def main():
     trainer.train()
     torch.cuda.empty_cache()
 
-    if trainer.forgetting_monitor is not None and not trainer.should_stop:
-      action, kl_metrics = trainer.forgetting_monitor.check_and_act(
-          trainer.model,
-          trainer.dataloader_train,
-          trainer.device,
-          trainer.step,
-      )
-      if rank == 0 and writer is not None:
-        for key, value in kl_metrics.items():
-          writer.add_scalar(f'monitor/{key}', value, trainer.cur_epoch)
-        if action != 'continue':
-          writer.add_text('monitor/action', action, trainer.cur_epoch)
-      if action == 'reduce_lr':
-        for param_group in optimizer.param_groups:
-          param_group['lr'] *= 0.5
-      elif action == 'early_stop':
-        trainer.should_stop = True
-      trainer.model.train()
-
     if (not trainer.should_stop) and ((args.setting != 'all') and (epoch % args.val_every == 0)):
       trainer.validate()
       torch.cuda.empty_cache()
@@ -1106,6 +1087,10 @@ class Engine(object):
         bool(getattr(config, 'use_oracle_kd', 0)) and not config.use_plant) else None
     self.forgetting_monitor = ForgettingMonitor(teacher_model, config) if (
         bool(getattr(config, 'use_forgetting_monitor', 0)) and teacher_model is not None and not config.use_plant) else None
+    if self.rank == 0:
+      print(f'A3D enabled: {bool(getattr(config, "use_a3d", 0)) and teacher_model is not None}', flush=True)
+      print(f'Oracle KD enabled: {self.oracle_loss_fn is not None}', flush=True)
+      print(f'Forgetting monitor enabled: {self.forgetting_monitor is not None}', flush=True)
     self.a3d_lambda_ema = 0.0
     self.a3d_traj_lambda_ema = 0.0
     self.a3d_speed_lambda_ema = 0.0
@@ -1541,6 +1526,27 @@ class Engine(object):
 
       if self.config.use_cosine_schedule:
         self.scheduler.step(self.cur_epoch + i / self.iters_per_epoch)
+
+      if self.forgetting_monitor is not None:
+        action, kl_metrics = self.forgetting_monitor.check_batch_and_act(
+            self.model,
+            data,
+            self.device,
+            self.step,
+        )
+        if kl_metrics and self.rank == 0:
+          print(f'Running forgetting monitor... step={self.step}', flush=True)
+        if self.rank == 0 and self.writer is not None:
+          for key, value in kl_metrics.items():
+            self.writer.add_scalar(f'monitor/{key}', value, self.step)
+          if action != 'continue':
+            self.writer.add_text('monitor/action', action, self.step)
+        if action == 'reduce_lr':
+          for param_group in self.optimizer.param_groups:
+            param_group['lr'] *= 0.1
+        elif action == 'early_stop':
+          self.should_stop = True
+          break
 
     self.optimizer.zero_grad(set_to_none=True)
     torch.cuda.empty_cache()

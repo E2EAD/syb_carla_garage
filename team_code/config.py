@@ -868,7 +868,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/kmeans_results/latest/track_cluster_log/all_abilities-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
     self.use_random_query_tokens = False
     self.random_query_traj_num_queries = 99
     self.random_query_fuse_feat_num_queries = 24
@@ -892,7 +892,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # A3D / AAAD continual distillation
     # -----------------------------------------------------------------------------
-    self.use_a3d = 0
+    self.use_a3d = 1
     self.a3d_ref_file = '/home/spc/syb_carla_garage/log/syb_QtdA3D_v2_0-eb_2stg'
     # Branch-wise adaptive gating (trajectory and speed are gated separately).
     self.a3d_traj_beta = 5.0
@@ -931,9 +931,9 @@ class GlobalConfig:
     self.min_correct_anchors = 1
 
     self.use_forgetting_monitor = 1
-    self.monitor_kl_every = 1000
+    self.monitor_kl_every = 100
     self.monitor_kl_batches = 3
-    self.kl_forgetting_threshold = 1.0
+    self.kl_forgetting_threshold = 0.4
     self.kl_patience = 3
     # -----------------------------------------------------------------------------
     # HGS (Hybrid Gradient Surgery) on top of A3D
