@@ -1117,6 +1117,19 @@ class Engine(object):
         'oracle_correct_anchor_rate': 'correct_anchor_rate',
     }
 
+  def _apply_forgetting_lr_decay(self, decay_factor):
+    decay_factor = float(decay_factor)
+    if decay_factor <= 0.0:
+      return
+
+    for param_group in self.optimizer.param_groups:
+      param_group['lr'] *= decay_factor
+
+    if hasattr(self.scheduler, 'base_lrs'):
+      self.scheduler.base_lrs = [lr * decay_factor for lr in self.scheduler.base_lrs]
+    if hasattr(self.scheduler, '_last_lr'):
+      self.scheduler._last_lr = [lr * decay_factor for lr in self.scheduler._last_lr]
+
   def load_data_compute_loss(self, data, validation=False):
     # Validation = True will compute additional metrics not used for optimization
     # Load data used in both methods
@@ -1542,8 +1555,9 @@ class Engine(object):
           if action != 'continue':
             self.writer.add_text('monitor/action', action, self.step)
         if action == 'reduce_lr':
-          for param_group in self.optimizer.param_groups:
-            param_group['lr'] *= 0.1
+          self._apply_forgetting_lr_decay(getattr(self.config, 'monitor_lr_decay', 0.1))
+          if self.rank == 0 and self.writer is not None:
+            self.writer.add_scalar('monitor/lr_after_decay', self.optimizer.param_groups[0]['lr'], self.step)
         elif action == 'early_stop':
           self.should_stop = True
           break

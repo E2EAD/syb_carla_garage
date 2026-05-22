@@ -892,7 +892,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # A3D / AAAD continual distillation
     # -----------------------------------------------------------------------------
-    self.use_a3d = 1
+    self.use_a3d = 0
     self.a3d_ref_file = '/home/spc/syb_carla_garage/log/syb_QtdA3D_v2_0-eb_2stg'
     # Branch-wise adaptive gating (trajectory and speed are gated separately).
     self.a3d_traj_beta = 5.0
