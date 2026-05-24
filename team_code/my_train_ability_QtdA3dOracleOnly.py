@@ -7,7 +7,7 @@ not construct the legacy trajectory/speed losses.
 """
 
 import my_train_ability_QtdA3dOracle_v2 as train_v2
-from my_model_QtdA3DOracleOnly import LidarCenterNet as OracleOnlyLidarCenterNet
+from my_model_wQtdA3DOracleOnly import LidarCenterNet as OracleOnlyLidarCenterNet
 
 
 class OracleOnlyConfig(train_v2.GlobalConfig):

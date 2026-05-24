@@ -933,7 +933,7 @@ class GlobalConfig:
     self.use_forgetting_monitor = 1
     self.monitor_kl_every = 100
     self.monitor_kl_batches = 3
-    self.kl_forgetting_threshold = 0.4
+    self.kl_forgetting_threshold = 0.2
     self.kl_patience = 3
     # -----------------------------------------------------------------------------
     # HGS (Hybrid Gradient Surgery) on top of A3D
