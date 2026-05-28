@@ -451,6 +451,8 @@ class GlobalConfig:
     self.sync_batch_norm = 0  # Whether batch norm was synchronized between GPUs
     # Whether zero_redundancy_optimizer was used during training
     self.zero_redundancy_optimizer = 1
+    self.max_num_workers = 8
+    self.persistent_workers = 1
     self.use_disk_cache = 0  # Whether disc cache was used during training
     self.detect_boxes = 1  # Whether to use the bounding box auxiliary task
     self.train_sampling_rate = 1  # We train on every n th sample on the route
@@ -492,6 +494,7 @@ class GlobalConfig:
         'loss_target_speed': 1.0,
         'loss_speed_kl_div': 1.0,
         'loss_traj_bce': 1.0,
+        'loss_mode_load_balance': 0.01,
         # 'diffusion_loss_velocity': 1,
         # 'diffusion_loss_traj_recon': 1,
         # 'diffusion_loss_speed_recon': 1,
@@ -523,6 +526,8 @@ class GlobalConfig:
         'loss_traj_oracle_kl': 0.3,
         'loss_speed_oracle_kl': 0.2,
         'loss_traj_l1': 0.0,
+        'loss_a3d_oracle_traj': 1.0,
+        'loss_a3d_oracle_speed': 1.0,
         # 'loss_task_encoder_anchor': 0.05,
         # 'task_encoder/avg_alignment_distance': 1,
         # 'task_encoder/avg_max_prob': 1,
@@ -868,11 +873,11 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/1-0-0-24774-tracked_clusters.json"  # run under project root
+    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
     self.use_random_query_tokens = False
     self.random_query_traj_num_queries = 99
     self.random_query_fuse_feat_num_queries = 24
-    self.selected_ability = 'Traffic_Sign' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.selected_ability = 'Give_Way' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
     # self.score_loss_weight = 1
@@ -888,6 +893,23 @@ class GlobalConfig:
     # self.tf_de_tgt_dim = 15
 
     self.temperature = 1
+
+    # -----------------------------------------------------------------------------
+    # MoDE-style anchor denoising trajectory decoder
+    # -----------------------------------------------------------------------------
+    self.mode_decoder_dim = self.tf_de_dim
+    self.mode_decoder_heads = self.tf_de_heads
+    self.mode_decoder_layers = self.tf_de_layers
+    self.mode_decoder_dropout = self.tf_de_dropout
+    self.mode_decoder_num_experts = 4
+    self.mode_decoder_top_k = 2
+    self.mode_num_anchor_queries = 0  # 0 means use every anchor in prior_traj_path
+    self.mode_sigma_min = 0.02
+    self.mode_sigma_max = 1.0
+    self.mode_sigma_data = 0.5
+    self.mode_anchor_noise_scale = 1.0
+    self.mode_offset_scale = 1.0
+    self.mode_use_noisy_anchor_prior = True
 
     # -----------------------------------------------------------------------------
     # A3D / AAAD continual distillation
@@ -921,7 +943,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Oracle Distribution KD continual training
     # -----------------------------------------------------------------------------
-    self.use_oracle_kd = 1
+    self.use_oracle_kd = 0
     self.oracle_ref_file = self.a3d_ref_file
     self.oracle_traj_threshold = 2.0
     self.oracle_kd_traj_weight = 0.3
@@ -930,11 +952,23 @@ class GlobalConfig:
     self.oracle_kd_temperature = 1.0
     self.min_correct_anchors = 1
 
-    self.use_forgetting_monitor = 1
+    self.use_forgetting_monitor = 0
     self.monitor_kl_every = 100
     self.monitor_kl_batches = 3
     self.kl_forgetting_threshold = 0.2
     self.kl_patience = 3
+
+    # -----------------------------------------------------------------------------
+    # Optional per-ability open-loop monitor
+    # -----------------------------------------------------------------------------
+    self.use_ability_open_loop_monitor = 0
+    self.ability_monitor_every = 100
+    self.ability_monitor_num_samples = 8
+    self.ability_monitor_batch_size = 2
+    self.ability_monitor_num_workers = 0
+    self.ability_monitor_split = 'train'
+    self.ability_monitor_root = ''
+    self.ability_monitor_disable_augment = 1
     # -----------------------------------------------------------------------------
     # HGS (Hybrid Gradient Surgery) on top of A3D
     # -----------------------------------------------------------------------------

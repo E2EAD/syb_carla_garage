@@ -7,6 +7,7 @@ train.py --logdir /path/to/logdir --root_dir /path/to/dataset_root/ --id exp_000
 '''
 
 import argparse
+import copy
 import json
 import os
 import pathlib
@@ -30,7 +31,8 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_wTFFdeQtdA3DOracleA3D import LidarCenterNet
+from my_model_mode_tfpp import LidarCenterNet
+from my_model_wTFFdeQtdA3DOracleA3D import LidarCenterNet as TeacherLidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
@@ -81,7 +83,8 @@ def load_checkpoint_ignore_anchors(model, checkpoint_path, device, strict=False)
     for key, value in checkpoint_state_dict.items():
         # 只跳过anchor数据本身，不跳过anchor相关的网络参数
         if key.endswith('.anchors') and 'anchors' in key:
-            print(f"跳过anchor数据: {key} | 检查点形状: {value.shape} | 模型形状: {model_state_dict[key].shape}")
+            model_shape = model_state_dict[key].shape if key in model_state_dict else 'missing'
+            print(f"跳过anchor数据: {key} | 检查点形状: {value.shape} | 模型形状: {model_shape}")
             continue
             
         if key in model_state_dict:
@@ -117,6 +120,15 @@ def _select_top1_trajectory(pred_trajectories, pred_traj_probs):
   batch_indices = torch.arange(pred_traj_probs.size(1), device=pred_trajectories.device)
   top1_traj = pred_trajectories[best_anchor_indices, batch_indices]  # (B, 10, 2)
   return top1_traj
+
+
+def unwrap_model(model):
+  """Return the real trainable module under torch.compile/DDP wrappers."""
+  while hasattr(model, '_orig_mod'):
+    model = model._orig_mod
+  while hasattr(model, 'module'):
+    model = model.module
+  return model
 
 
 def _compute_traj_score(pred_trajectories, pred_traj_probs, checkpoint, config):
@@ -159,12 +171,79 @@ def load_teacher_from_dir(teacher_dir, device):
   ckpt_files = sorted(ckpt_files)
   teacher_ckpt = os.path.join(teacher_dir, ckpt_files[-1])
 
-  teacher_model = LidarCenterNet(teacher_config)
+  teacher_model = TeacherLidarCenterNet(teacher_config)
   teacher_model.cuda(device=device)
   teacher_model = load_checkpoint_ignore_anchors(teacher_model, teacher_ckpt, device)
   teacher_model.eval()
   teacher_model.requires_grad_(False)
   return teacher_model, teacher_ckpt
+
+
+def build_ability_monitor_loaders(config, shared_dict, rank):
+  if rank != 0 or not bool(getattr(config, 'use_ability_open_loop_monitor', 0)):
+    return None
+
+  abilities = []
+  for ability in getattr(config, 'selected_ability_list', []):
+    if ability == 'No_Scenario' or ability in abilities:
+      continue
+    abilities.append(ability)
+
+  if not abilities:
+    print('Ability open-loop monitor enabled but no non-No_Scenario abilities were selected.', flush=True)
+    return None
+
+  split = str(getattr(config, 'ability_monitor_split', 'train')).lower()
+  validation = split in ('val', 'valid', 'validation')
+  root_override = str(getattr(config, 'ability_monitor_root', '')).strip()
+  root = root_override if root_override else (config.dataset_root if validation else config.mini_dataset_root)
+
+  monitor_config = copy.copy(config)
+  if bool(getattr(config, 'ability_monitor_disable_augment', 1)):
+    monitor_config.augment = False
+    monitor_config.augment_percentage = 0.0
+    monitor_config.use_color_aug = False
+    monitor_config.use_cutout = False
+  monitor_config.use_semantic = False
+  monitor_config.use_bev_semantic = False
+  monitor_config.use_depth = False
+  monitor_config.detect_boxes = False
+
+  batch_size = max(1, int(getattr(config, 'ability_monitor_batch_size', 2)))
+  num_workers = max(0, int(getattr(config, 'ability_monitor_num_workers', 0)))
+  seed = getattr(config, 'seed', None)
+  seed = 0 if seed is None else int(seed)
+
+  loaders = {}
+  for ability_idx, ability in enumerate(abilities):
+    dataset = Ability_CARLA_Data(root=root,
+                                 config=monitor_config,
+                                 estimate_class_distributions=False,
+                                 estimate_sem_distribution=False,
+                                 shared_dict=None,
+                                 rank=rank,
+                                 validation=validation,
+                                 ability=ability)
+    if len(dataset) == 0:
+      print(f'Ability open-loop monitor skipped {ability}: dataset is empty.', flush=True)
+      continue
+
+    generator = torch.Generator(device='cpu')
+    generator.manual_seed(seed + 1729 + ability_idx)
+    loaders[ability] = DataLoader(dataset,
+                                  batch_size=batch_size,
+                                  shuffle=True,
+                                  worker_init_fn=seed_worker if num_workers > 0 else None,
+                                  generator=generator,
+                                  num_workers=num_workers,
+                                  pin_memory=False,
+                                  drop_last=False)
+
+  if loaders:
+    print(f'Ability open-loop monitor enabled for abilities: {list(loaders.keys())}', flush=True)
+  else:
+    print('Ability open-loop monitor enabled but no monitor loaders were created.', flush=True)
+  return loaders
 
 
 def _safe_kl(student_logits, teacher_logits, temperature):
@@ -477,6 +556,14 @@ def main():
                       required=True,
                       help='How many cpu cores are available on the machine.'
                       'The code will spawn a thread for each cpu.')
+  parser.add_argument('--max_num_workers',
+                      type=int,
+                      default=int(getattr(config, 'max_num_workers', 8)),
+                      help='Upper bound for DataLoader workers per rank.')
+  parser.add_argument('--persistent_workers',
+                      type=int,
+                      default=int(getattr(config, 'persistent_workers', 1)),
+                      help='Keep DataLoader workers alive across epochs when num_workers > 0.')
   parser.add_argument('--tp_attention',
                       type=int,
                       default=int(config.tp_attention),
@@ -534,9 +621,61 @@ def main():
                       type=str,
                       default=str(config.compile_mode),
                       help='compile mode for torch compile')
+  parser.add_argument('--mode_decoder_dim',
+                      type=int,
+                      default=int(getattr(config, 'mode_decoder_dim', config.tf_de_dim)),
+                      help='Hidden dimension of the MoDE-style anchor decoder.')
+  parser.add_argument('--mode_decoder_heads',
+                      type=int,
+                      default=int(getattr(config, 'mode_decoder_heads', config.tf_de_heads)),
+                      help='Attention heads of the MoDE-style anchor decoder.')
+  parser.add_argument('--mode_decoder_layers',
+                      type=int,
+                      default=int(getattr(config, 'mode_decoder_layers', config.tf_de_layers)),
+                      help='Number of MoDE-style decoder blocks.')
+  parser.add_argument('--mode_decoder_dropout',
+                      type=float,
+                      default=float(getattr(config, 'mode_decoder_dropout', config.tf_de_dropout)),
+                      help='Dropout used in the MoDE-style anchor decoder.')
+  parser.add_argument('--mode_decoder_num_experts',
+                      type=int,
+                      default=int(getattr(config, 'mode_decoder_num_experts', 4)),
+                      help='Number of sparse MLP experts in each MoDE block.')
+  parser.add_argument('--mode_decoder_top_k',
+                      type=int,
+                      default=int(getattr(config, 'mode_decoder_top_k', 2)),
+                      help='Number of experts selected per token.')
+  parser.add_argument('--mode_num_anchor_queries',
+                      type=int,
+                      default=int(getattr(config, 'mode_num_anchor_queries', 0)),
+                      help='Number of trajectory anchors to use. 0 means all anchors in prior_traj_path.')
+  parser.add_argument('--mode_sigma_min',
+                      type=float,
+                      default=float(getattr(config, 'mode_sigma_min', 0.02)),
+                      help='Minimum anchor-prior noise level.')
+  parser.add_argument('--mode_sigma_max',
+                      type=float,
+                      default=float(getattr(config, 'mode_sigma_max', 1.0)),
+                      help='Maximum anchor-prior noise level.')
+  parser.add_argument('--mode_sigma_data',
+                      type=float,
+                      default=float(getattr(config, 'mode_sigma_data', 0.5)),
+                      help='EDM-style data scale used to normalize anchor noise.')
+  parser.add_argument('--mode_anchor_noise_scale',
+                      type=float,
+                      default=float(getattr(config, 'mode_anchor_noise_scale', 1.0)),
+                      help='Multiplier for diagonal-Gaussian anchor prior noise.')
+  parser.add_argument('--mode_offset_scale',
+                      type=float,
+                      default=float(getattr(config, 'mode_offset_scale', 1.0)),
+                      help='Multiplier for predicted anchor offsets.')
+  parser.add_argument('--mode_use_noisy_anchor_prior',
+                      type=int,
+                      default=int(getattr(config, 'mode_use_noisy_anchor_prior', True)),
+                      help='Use anchor mu/var to inject a noisy prior during training.')
   parser.add_argument('--use_a3d',
                       type=int,
-                      default=1,
+                      default=0,
                       help='Enable Advantage-Anchored Adaptive Distillation (AAAD/A3D).')
   parser.add_argument('--a3d_ref_file',
                       type=str,
@@ -629,6 +768,39 @@ def main():
                       type=int,
                       default=int(getattr(config, 'kl_patience', 3)),
                       help='Consecutive KL-threshold exceedances before early stopping.')
+  parser.add_argument('--use_ability_open_loop_monitor',
+                      type=int,
+                      default=int(getattr(config, 'use_ability_open_loop_monitor', 0)),
+                      help='Enable rank-0 TensorBoard monitor for per-ability open-loop trajectory/speed metrics.')
+  parser.add_argument('--ability_monitor_every',
+                      type=int,
+                      default=int(getattr(config, 'ability_monitor_every', 500)),
+                      help='Training steps between per-ability open-loop monitor runs.')
+  parser.add_argument('--ability_monitor_num_samples',
+                      type=int,
+                      default=int(getattr(config, 'ability_monitor_num_samples', 8)),
+                      help='Maximum samples evaluated per ability at each monitor run.')
+  parser.add_argument('--ability_monitor_batch_size',
+                      type=int,
+                      default=int(getattr(config, 'ability_monitor_batch_size', 2)),
+                      help='Batch size for the per-ability open-loop monitor.')
+  parser.add_argument('--ability_monitor_num_workers',
+                      type=int,
+                      default=int(getattr(config, 'ability_monitor_num_workers', 0)),
+                      help='DataLoader workers for the per-ability open-loop monitor.')
+  parser.add_argument('--ability_monitor_split',
+                      type=str,
+                      default=str(getattr(config, 'ability_monitor_split', 'train')),
+                      choices=['train', 'val', 'valid', 'validation'],
+                      help='Dataset split used by the per-ability open-loop monitor.')
+  parser.add_argument('--ability_monitor_root',
+                      type=str,
+                      default=str(getattr(config, 'ability_monitor_root', '')),
+                      help='Optional dataset root override for the per-ability open-loop monitor.')
+  parser.add_argument('--ability_monitor_disable_augment',
+                      type=int,
+                      default=int(getattr(config, 'ability_monitor_disable_augment', 1)),
+                      help='Disable dataset augmentation for monitor samples.')
 
   args = parser.parse_args()
   args.logdir = os.path.join(args.logdir, args.id)
@@ -669,9 +841,12 @@ def main():
 
   ngpus_per_node = torch.cuda.device_count()
   ncpus_per_node = args.cpu_cores
-  num_workers = int(ncpus_per_node / ngpus_per_node)
+  requested_workers = int(ncpus_per_node / max(1, ngpus_per_node))
+  max_workers = max(0, int(getattr(args, 'max_num_workers', requested_workers)))
+  num_workers = min(requested_workers, max_workers)
+  persistent_workers = bool(getattr(args, 'persistent_workers', 1)) and num_workers > 0
   print('Rank:', rank, 'Device:', device, 'Num GPUs on node:', ngpus_per_node, 'Num CPUs on node:', ncpus_per_node,
-        'Num workers:', num_workers)
+        'Num workers:', num_workers, 'Persistent workers:', persistent_workers)
   torch.cuda.device(device)
   # We want the highest performance
   torch.backends.cuda.matmul.allow_tf32 = True
@@ -701,13 +876,9 @@ def main():
   if not config.use_controller_input_prediction:
     config.detailed_loss_weights['loss_target_speed'] = 0.0
     config.detailed_loss_weights['loss_checkpoint'] = 0.0
-    config.detailed_loss_weights['loss_a3d_total'] = 0.0
-    config.detailed_loss_weights['loss_a3d_traj_kd'] = 0.0
-    config.detailed_loss_weights['loss_a3d_speed_kd'] = 0.0
-    config.detailed_loss_weights['loss_a3d_offset_kd'] = 0.0
-    config.detailed_loss_weights['loss_traj_oracle_kl'] = 0.0
-    config.detailed_loss_weights['loss_speed_oracle_kl'] = 0.0
-    config.detailed_loss_weights['loss_traj_l1'] = 0.0
+    config.detailed_loss_weights['loss_mode_load_balance'] = 0.0
+    config.detailed_loss_weights['loss_a3d_oracle_traj'] = 0.0
+    config.detailed_loss_weights['loss_a3d_oracle_speed'] = 0.0
   elif bool(config.use_oracle_kd):
     config.detailed_loss_weights['loss_target_speed'] = 0.0
     config.detailed_loss_weights['loss_traj_kl_div'] = 0.0
@@ -741,23 +912,26 @@ def main():
     config.detailed_loss_weights['loss_brake'] = 0.0
 
   if not bool(config.use_a3d):
-    config.detailed_loss_weights['loss_a3d_total'] = 0.0
-    config.detailed_loss_weights['loss_a3d_traj_kd'] = 0.0
-    config.detailed_loss_weights['loss_a3d_speed_kd'] = 0.0
-    config.detailed_loss_weights['loss_a3d_offset_kd'] = 0.0
+    config.detailed_loss_weights['loss_a3d_oracle_traj'] = 0.0
+    config.detailed_loss_weights['loss_a3d_oracle_speed'] = 0.0
 
   if bool(config.use_a3d) and (not config.use_plant) and bool(config.use_controller_input_prediction):
-    config.detailed_loss_weights['loss_a3d_total'] = float(config.a3d_lambda_max)
-    config.detailed_loss_weights['loss_a3d_traj_kd'] = float(config.a3d_traj_kd_weight)
-    config.detailed_loss_weights['loss_a3d_speed_kd'] = float(config.a3d_speed_kd_weight)
-    config.detailed_loss_weights['loss_a3d_offset_kd'] = float(config.a3d_offset_kd_weight)
-    config.detailed_loss_weights['loss_traj_oracle_kl'] = float(config.oracle_kd_traj_weight)
-    config.detailed_loss_weights['loss_speed_oracle_kl'] = float(config.oracle_kd_speed_weight)
-    config.detailed_loss_weights['loss_traj_l1'] = float(config.oracle_kd_traj_l1_weight)
+    config.detailed_loss_weights['loss_a3d_oracle_traj'] = float(config.oracle_kd_traj_weight)
+    config.detailed_loss_weights['loss_a3d_oracle_speed'] = float(config.oracle_kd_speed_weight)
   else:
-    config.detailed_loss_weights['loss_traj_oracle_kl'] = 0.0
-    config.detailed_loss_weights['loss_speed_oracle_kl'] = 0.0
-    config.detailed_loss_weights['loss_traj_l1'] = 0.0
+    config.detailed_loss_weights['loss_a3d_oracle_traj'] = 0.0
+    config.detailed_loss_weights['loss_a3d_oracle_speed'] = 0.0
+
+  for obsolete_loss_key in (
+      'loss_a3d_total',
+      'loss_a3d_traj_kd',
+      'loss_a3d_speed_kd',
+      'loss_a3d_offset_kd',
+      'loss_traj_oracle_kl',
+      'loss_speed_oracle_kl',
+      'loss_traj_l1',
+  ):
+    config.detailed_loss_weights.pop(obsolete_loss_key, None)
 
   # Not possible to predicted in a principled way from a single frame
   if config.lidar_seq_len == 1 and config.seq_len == 1:
@@ -802,7 +976,7 @@ def main():
                          shared_dict=shared_dict,
                          rank=rank,
                          validation=False,
-                         ability=config.selected_ability)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+                         ability_list=config.selected_ability_list)  # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
 
   if args.setting != 'all':
     val_set = Ability_CARLA_Data(root=config.dataset_root, config=config, shared_dict=shared_dict, rank=rank, validation=True, ability_list=config.selected_ability_list)
@@ -901,7 +1075,7 @@ def main():
                                                     # find_unused_parameters=True)
 
   if config.use_optim_groups:
-    params = model.module.create_optimizer_groups(config.weight_decay)
+    params = unwrap_model(model).create_optimizer_groups(config.weight_decay)
   else:
     params = model.parameters()
 
@@ -955,6 +1129,7 @@ def main():
                                 generator=g_cuda,
                                 num_workers=num_workers,
                                 pin_memory=False,
+                                persistent_workers=persistent_workers,
                                 drop_last=True)
 
   if args.setting != 'all':
@@ -970,9 +1145,12 @@ def main():
                                 generator=g_cuda,
                                 num_workers=num_workers,
                                 pin_memory=False,
+                                persistent_workers=persistent_workers,
                                 drop_last=True)
   else:
     sampler_val, dataloader_val = None, None
+
+  ability_monitor_loaders = build_ability_monitor_loaders(config, shared_dict, rank)
 
   # Create logdir
   if ((not os.path.isdir(args.logdir)) and (rank == 0)):
@@ -1010,6 +1188,7 @@ def main():
                    optimizer=optimizer,
                    dataloader_train=dataloader_train,
                    dataloader_val=dataloader_val,
+                   ability_monitor_loaders=ability_monitor_loaders,
                    args=args,
                    config=config,
                    writer=writer,
@@ -1061,6 +1240,7 @@ class Engine(object):
                optimizer,
                dataloader_train,
                dataloader_val,
+               ability_monitor_loaders,
                args,
                config,
                writer,
@@ -1080,6 +1260,7 @@ class Engine(object):
     self.optimizer = optimizer
     self.dataloader_train = dataloader_train
     self.dataloader_val = dataloader_val
+    self.ability_monitor_loaders = ability_monitor_loaders
     self.args = args
     self.config = config
     self.writer = writer
@@ -1105,6 +1286,7 @@ class Engine(object):
       print(f'A3D enabled: {bool(getattr(config, "use_a3d", 0)) and teacher_model is not None}', flush=True)
       print(f'Oracle KD enabled: {self.oracle_loss_fn is not None}', flush=True)
       print(f'Forgetting monitor enabled: {self.forgetting_monitor is not None}', flush=True)
+      print(f'Ability open-loop monitor enabled: {bool(self.ability_monitor_loaders)}', flush=True)
     self.a3d_lambda_ema = 0.0
     self.a3d_traj_lambda_ema = 0.0
     self.a3d_speed_lambda_ema = 0.0
@@ -1124,9 +1306,8 @@ class Engine(object):
         'a3d_lambda': 'lambda_kd_avg',
     }
     self.oracle_monitor_tags = {
-        'loss_traj_oracle_kl': 'traj_kl',
-        'loss_speed_oracle_kl': 'speed_kl',
-        'loss_traj_l1': 'traj_l1',
+        'loss_a3d_oracle_traj': 'a3d_oracle_traj',
+        'loss_a3d_oracle_speed': 'a3d_oracle_speed',
         'speed_acc': 'speed_acc',
         'oracle_correct_anchor_rate': 'correct_anchor_rate',
     }
@@ -1143,6 +1324,154 @@ class Engine(object):
       self.scheduler.base_lrs = [lr * decay_factor for lr in self.scheduler.base_lrs]
     if hasattr(self.scheduler, '_last_lr'):
       self.scheduler._last_lr = [lr * decay_factor for lr in self.scheduler._last_lr]
+
+  def _trim_monitor_batch(self, data, max_items):
+    if max_items <= 0:
+      return data
+
+    trimmed = {}
+    for key, value in data.items():
+      if torch.is_tensor(value) and value.size(0) > max_items:
+        trimmed[key] = value[:max_items]
+      else:
+        trimmed[key] = value
+    return trimmed
+
+  def _build_monitor_traj_soft_labels(self, pred_trajectories, checkpoint):
+    with torch.no_grad():
+      distances = torch.norm(pred_trajectories - checkpoint.unsqueeze(0), dim=-1).sum(dim=-1)
+      distances = torch.clamp(distances, min=1e-6, max=100.0)
+      neg_distances = -distances / float(self.config.temperature)
+      neg_distances = neg_distances - neg_distances.max(dim=0, keepdim=True)[0]
+      soft_labels = F.softmax(neg_distances, dim=0)
+      soft_labels = torch.clamp(soft_labels, min=1e-8, max=1.0)
+      soft_labels = soft_labels / soft_labels.sum(dim=0, keepdim=True).clamp_min(1e-8)
+    return soft_labels
+
+  def _compute_ability_open_loop_metrics(self, data):
+    if self.config.use_plant:
+      return {}, 0
+
+    rgb = data['rgb'].to(self.device, dtype=torch.float32)
+    if self.config.lidar_seq_len > 1:
+      lidar = data['temporal_lidar'].to(self.device, dtype=torch.float32)
+    else:
+      lidar = data['lidar'].to(self.device, dtype=torch.float32)
+
+    target_point = data['target_point'].to(self.device, dtype=torch.float32)
+    target_point_next = None
+    if self.config.two_tp_input:
+      target_point_next = data['target_point_next'].to(self.device, dtype=torch.float32)
+    command = data['command'].to(self.device, dtype=torch.float32)
+    ego_vel = data['speed'].to(self.device, dtype=torch.float32).unsqueeze(1)
+    batch_size = int(rgb.size(0))
+
+    base_model = unwrap_model(self.model)
+    _ = base_model(rgb=rgb,
+                   lidar_bev=lidar,
+                   target_point=target_point,
+                   ego_vel=ego_vel,
+                   command=command,
+                   target_point_next=target_point_next)
+
+    student_tensors = base_model.latest_distill_tensors
+    if student_tensors is None:
+      return {}, batch_size
+
+    metrics = {}
+    pred_trajectories = student_tensors.get('pred_trajectories')
+    pred_traj_probs = student_tensors.get('pred_traj_probs', student_tensors.get('traj_probs'))
+    traj_logits = student_tensors.get('traj_logits')
+    if pred_trajectories is not None and pred_traj_probs is not None:
+      traj_steps = min(int(pred_trajectories.size(2)), int(data['route'].size(1)))
+      pred_trajectories = pred_trajectories[:, :, :traj_steps]
+      checkpoint = data['route'][:, :traj_steps].to(self.device, dtype=torch.float32)
+      top1_traj = _select_top1_trajectory(pred_trajectories, pred_traj_probs)
+
+      if top1_traj is not None:
+        traj_error = torch.norm(top1_traj - checkpoint, dim=-1)
+        metrics['traj_ade'] = float(traj_error.mean().item())
+        metrics['traj_fde'] = float(traj_error[:, -1].mean().item())
+
+      soft_labels = self._build_monitor_traj_soft_labels(pred_trajectories, checkpoint)
+      if (traj_logits is not None and traj_logits.size(0) == soft_labels.size(0) and
+          traj_logits.size(1) == soft_labels.size(1)):
+        log_pred_traj = F.log_softmax(traj_logits.transpose(0, 1), dim=-1)
+      else:
+        pred_prob = pred_traj_probs.transpose(0, 1).clamp_min(1e-8)
+        pred_prob = pred_prob / pred_prob.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        log_pred_traj = torch.log(pred_prob)
+      metrics['traj_kl'] = float(F.kl_div(log_pred_traj,
+                                          soft_labels.transpose(0, 1),
+                                          reduction='batchmean',
+                                          log_target=False).item())
+
+    speed_logits = student_tensors.get('speed_logits')
+    target_speed = data.get('target_speed_twohot')
+    if speed_logits is not None and target_speed is not None:
+      target_speed = target_speed.to(self.device, dtype=torch.float32)
+      if target_speed.size(1) == speed_logits.size(1):
+        target_speed = target_speed / target_speed.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        pred_speed_idx = torch.argmax(speed_logits, dim=1)
+        target_speed_idx = torch.argmax(target_speed, dim=1)
+        metrics['speed_acc'] = float((pred_speed_idx == target_speed_idx).float().mean().item())
+        metrics['speed_kl'] = float(F.kl_div(F.log_softmax(speed_logits, dim=-1),
+                                             target_speed,
+                                             reduction='batchmean',
+                                             log_target=False).item())
+
+    return metrics, batch_size
+
+  @torch.inference_mode()
+  def run_ability_open_loop_monitor(self):
+    if self.rank != 0 or self.writer is None:
+      return
+    if not bool(getattr(self.config, 'use_ability_open_loop_monitor', 0)):
+      return
+    if not self.ability_monitor_loaders:
+      return
+
+    monitor_every = int(getattr(self.config, 'ability_monitor_every', 500))
+    if monitor_every <= 0 or self.step <= 0 or (self.step % monitor_every) != 0:
+      return
+
+    max_samples = max(1, int(getattr(self.config, 'ability_monitor_num_samples', 8)))
+    was_training = self.model.training
+    self.model.eval()
+    print(f'Running ability open-loop monitor... step={self.step}', flush=True)
+
+    try:
+      for ability, loader in self.ability_monitor_loaders.items():
+        metric_sums = defaultdict(float)
+        num_samples = 0
+
+        for data in loader:
+          remaining = max_samples - num_samples
+          if remaining <= 0:
+            break
+
+          data = self._trim_monitor_batch(data, remaining)
+          metrics, batch_size = self._compute_ability_open_loop_metrics(data)
+          if batch_size <= 0:
+            continue
+
+          for key, value in metrics.items():
+            metric_sums[key] += float(value) * batch_size
+          num_samples += batch_size
+
+          if num_samples >= max_samples:
+            break
+
+        if num_samples <= 0:
+          continue
+
+        for key, value in metric_sums.items():
+          self.writer.add_scalar(f'ability_open_loop/{ability}/{key}', value / float(num_samples), self.step)
+        self.writer.add_scalar(f'ability_open_loop/{ability}/num_samples', num_samples, self.step)
+      self.writer.flush()
+    finally:
+      if was_training:
+        self.model.train()
 
   def load_data_compute_loss(self, data, validation=False):
     # Validation = True will compute additional metrics not used for optimization
@@ -1244,8 +1573,9 @@ class Engine(object):
     else:
       raise ValueError('The chosen vision backbone does not exist. The options are: transFuser, aim, bev_encoder')
 
-    compute_loss = self.model.module.compute_loss
-    visualize_model = self.model.module.visualize_model
+    base_model = unwrap_model(self.model)
+    compute_loss = base_model.compute_loss
+    visualize_model = base_model.visualize_model
 
     if self.config.use_plant:  # 0
       losses = compute_loss(pred_wp=pred_wp,
@@ -1285,6 +1615,10 @@ class Engine(object):
 
     metrics = {}
     teacher_tensors_for_oracle = None
+    a3d_traj_ref_loss = None
+    a3d_speed_ref_loss = None
+    a3d_traj_lambda = None
+    a3d_speed_lambda = None
 
     # A3D adaptive KD is applied only during training, with a frozen teacher.
     if bool(self.config.use_a3d) and (self.teacher_model is not None) and (not validation) and (not self.config.use_plant):
@@ -1298,7 +1632,7 @@ class Engine(object):
         teacher_tensors = self.teacher_model.latest_distill_tensors
         teacher_tensors_for_oracle = teacher_tensors
 
-      student_tensors = self.model.module.latest_distill_tensors
+      student_tensors = base_model.latest_distill_tensors
       if teacher_tensors is not None and student_tensors is not None:
         t_traj_score = _compute_traj_score(
             teacher_tensors.get('pred_trajectories'),
@@ -1364,25 +1698,10 @@ class Engine(object):
           # Teacher-weighted expected geometry mismatch under soft matching.
           loss_offset = torch.mean(torch.sum(matched_t2s_l1 * t_traj_prob, dim=-1))
 
-          traj_kd_combined = (
-              self.config.a3d_traj_kd_weight * loss_traj_kd +
-              self.config.a3d_offset_kd_weight * loss_offset
-          )
-          weighted_traj_kd = torch.tensor(traj_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype) * traj_kd_combined
-          weighted_speed_kd = torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype) * (
-              self.config.a3d_speed_kd_weight * loss_speed_kd
-          )
-
-          losses['loss_a3d_total'] = weighted_traj_kd + weighted_speed_kd
-          losses['loss_a3d_traj_kd'] = torch.tensor(traj_lambda_kd,
-                                                    device=self.device,
-                                                    dtype=loss_traj_kd.dtype) * loss_traj_kd
-          losses['loss_a3d_speed_kd'] = torch.tensor(speed_lambda_kd,
-                                                     device=self.device,
-                                                     dtype=loss_speed_kd.dtype) * loss_speed_kd
-          losses['loss_a3d_offset_kd'] = torch.tensor(traj_lambda_kd,
-                                                      device=self.device,
-                                                      dtype=loss_offset.dtype) * loss_offset
+          a3d_traj_ref_loss = loss_traj_kd + self.config.a3d_offset_kd_weight * loss_offset
+          a3d_speed_ref_loss = loss_speed_kd
+          a3d_traj_lambda = torch.tensor(traj_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype)
+          a3d_speed_lambda = torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype)
 
           avg_lambda_kd = 0.5 * (traj_lambda_kd + speed_lambda_kd)
           self.a3d_lambda_ema = avg_lambda_kd
@@ -1420,16 +1739,25 @@ class Engine(object):
             teacher_tensors_for_oracle = self.teacher_model.latest_distill_tensors
         base_tensors = teacher_tensors_for_oracle
 
-      oracle_losses = self.oracle_loss_fn(
-          student_tensors=self.model.module.latest_distill_tensors,
+      oracle_components, oracle_metrics = self.oracle_loss_fn.compute_components(
+          student_tensors=base_model.latest_distill_tensors,
           gt_data=data,
           base_tensors=base_tensors,
       )
-      for key, value in oracle_losses.items():
-        if key.startswith('loss_'):
-          losses[key] = value
-        else:
-          metrics[key] = float(value.detach().item())
+      metrics.update({key: float(value.detach().item()) for key, value in oracle_metrics.items()})
+
+      if bool(self.config.use_a3d) and (self.teacher_model is not None):
+        if a3d_traj_ref_loss is not None and a3d_traj_lambda is not None and 'traj_oracle_kl' in oracle_components:
+          losses['loss_a3d_oracle_traj'] = (
+              a3d_traj_lambda * a3d_traj_ref_loss +
+              (1.0 - a3d_traj_lambda) * oracle_components['traj_oracle_kl']
+          )
+
+        if a3d_speed_ref_loss is not None and a3d_speed_lambda is not None and 'speed_oracle_kl' in oracle_components:
+          losses['loss_a3d_oracle_speed'] = (
+              a3d_speed_lambda * a3d_speed_ref_loss +
+              (1.0 - a3d_speed_lambda) * oracle_components['speed_oracle_kl']
+          )
 
     # Compute metrics for logging
     if validation:
@@ -1440,7 +1768,7 @@ class Engine(object):
                                                         num_classes=self.config.num_semantic_classes).item()
         metrics['semantic_miou'] = ss_miou
       if self.config.use_bev_semantic and not self.config.use_plant:
-        valid_bev_pixels = self.model.module.valid_bev_pixels
+        valid_bev_pixels = base_model.valid_bev_pixels
 
         visible_bev_semantic_label = valid_bev_pixels.squeeze(1).int() * bev_semantic_label
         # Set 0 class to ignore index -1
@@ -1459,7 +1787,7 @@ class Engine(object):
         (self.vis_save_path is not None) and not self.config.use_plant:
       with torch.no_grad():
         if self.config.detect_boxes:
-          pred_bounding_box = self.model.module.convert_features_to_bb_metric(pred_bounding_box)
+          pred_bounding_box = base_model.convert_features_to_bb_metric(pred_bounding_box)
         else:
           pred_bounding_box = None
 
@@ -1576,6 +1904,8 @@ class Engine(object):
           self.should_stop = True
           break
 
+      self.run_ability_open_loop_monitor()
+
     self.optimizer.zero_grad(set_to_none=True)
     torch.cuda.empty_cache()
 
@@ -1645,13 +1975,12 @@ class Engine(object):
     scaler_file = os.path.join(self.args.logdir, f'scaler_{self.cur_epoch:04d}.pth')
     scheduler_file = os.path.join(self.args.logdir, f'scheduler_{self.cur_epoch:04d}.pth')
 
-    # The parallel weights are named differently with the module.
-    # We remove that, so that we can load the model with the same code.
-    torch.save(self.model.module.state_dict(), model_file)
-
+    pathlib.Path(self.args.logdir).mkdir(parents=True, exist_ok=True)
+    torch.save(unwrap_model(self.model).state_dict(), model_file)
     torch.save(self.optimizer.state_dict(), optimizer_file)
     torch.save(self.scaler.state_dict(), scaler_file)
     torch.save(self.scheduler.state_dict(), scheduler_file)
+    print(f'Saved checkpoint files for epoch {self.cur_epoch} to {self.args.logdir}', flush=True)
 
     # Remove last epochs files to avoid accumulating storage
     if self.cur_epoch > 0:
@@ -1693,8 +2022,8 @@ def seed_worker(worker_id):  # pylint: disable=locally-disabled, unused-argument
   torch.manual_seed(worker_seed)
   np.random.seed(worker_seed)
   random.seed(worker_seed)
-  print(
-      f'Rank: {rank}, Worker id: {worker_id}, torch.inital_seed(): {torch.initial_seed()}, worker_seed: {worker_seed}')
+  if worker_id == 0:
+    print(f'Rank: {rank}, Worker id: {worker_id}, worker_seed: {worker_seed}', flush=True)
 
 
 if __name__ == '__main__':

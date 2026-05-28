@@ -51,10 +51,11 @@ class OracleKDLoss(nn.Module):
     target_sum = target_speed.sum(dim=-1, keepdim=True).clamp_min(1.0)
     return target_speed / target_sum
 
-  def forward(self, student_tensors, gt_data, base_tensors=None):
-    losses = {}
+  def compute_components(self, student_tensors, gt_data, base_tensors=None):
+    components = {}
+    metrics = {}
     if student_tensors is None:
-      return losses
+      return components, metrics
 
     if 'pred_trajectories' in student_tensors and 'traj_logits' in student_tensors:
       student_traj = student_tensors['pred_trajectories'].permute(1, 0, 2, 3)
@@ -81,19 +82,12 @@ class OracleKDLoss(nn.Module):
       else:
         oracle_probs = compute_oracle_traj_probs(student_traj_logits.detach(), correct_mask)
 
-      losses['loss_traj_oracle_kl'] = safe_kl_with_target_probs(
+      components['traj_oracle_kl'] = safe_kl_with_target_probs(
           student_traj_logits,
           oracle_probs,
           self.kd_temperature,
       )
-
-      probs_key = self._traj_probs_key(student_tensors)
-      if probs_key is not None:
-        best_idx = torch.argmax(student_tensors[probs_key], dim=0)
-        batch_idx = torch.arange(best_idx.size(0), device=best_idx.device)
-        selected_traj = student_traj[batch_idx, best_idx]
-        losses['loss_traj_l1'] = F.l1_loss(selected_traj, gt_route)
-        losses['oracle_correct_anchor_rate'] = correct_mask.float().mean().detach()
+      metrics['oracle_correct_anchor_rate'] = correct_mask.float().mean().detach()
 
     if 'speed_logits' in student_tensors:
       student_speed_logits = student_tensors['speed_logits']
@@ -106,7 +100,7 @@ class OracleKDLoss(nn.Module):
         base_speed_logits = student_speed_logits.detach()
 
       oracle_speed = compute_oracle_speed_probs(base_speed_logits, correct_indices)
-      losses['loss_speed_oracle_kl'] = safe_kl_with_target_probs(
+      components['speed_oracle_kl'] = safe_kl_with_target_probs(
           student_speed_logits,
           oracle_speed,
           self.kd_temperature,
@@ -114,6 +108,29 @@ class OracleKDLoss(nn.Module):
 
       pred_idx = torch.argmax(student_speed_logits, dim=1)
       target_idx = torch.argmax(target_speed, dim=1)
-      losses['speed_acc'] = (pred_idx == target_idx).float().mean().detach()
+      metrics['speed_acc'] = (pred_idx == target_idx).float().mean().detach()
+
+    return components, metrics
+
+  def forward(self, student_tensors, gt_data, base_tensors=None):
+    losses = {}
+    components, metrics = self.compute_components(student_tensors, gt_data, base_tensors)
+
+    if 'traj_oracle_kl' in components:
+      losses['loss_traj_oracle_kl'] = components['traj_oracle_kl']
+
+      student_traj = student_tensors['pred_trajectories'].permute(1, 0, 2, 3)
+      gt_route = self._route_target(gt_data, student_traj.size(2), student_traj.device)
+      probs_key = self._traj_probs_key(student_tensors)
+      if probs_key is not None:
+        best_idx = torch.argmax(student_tensors[probs_key], dim=0)
+        batch_idx = torch.arange(best_idx.size(0), device=best_idx.device)
+        selected_traj = student_traj[batch_idx, best_idx]
+        losses['loss_traj_l1'] = F.l1_loss(selected_traj, gt_route)
+
+    if 'speed_oracle_kl' in components:
+      losses['loss_speed_oracle_kl'] = components['speed_oracle_kl']
+
+    losses.update(metrics)
 
     return losses
