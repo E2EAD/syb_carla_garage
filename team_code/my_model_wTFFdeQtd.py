@@ -37,6 +37,7 @@ class LidarCenterNet(nn.Module):
   def __init__(self, config):
     super().__init__()
     self.config = config
+    self.latest_distill_tensors = None
     self.lateral_pid_controller = LateralPIDController(self.config)
 
     self.speed_histogram = []
@@ -333,6 +334,7 @@ class LidarCenterNet(nn.Module):
     attention_weights = None
     pred_wp_1 = None
     selected_path = None
+    distill_tensors = {}
 
     if self.config.use_wp_gru or self.config.use_controller_input_prediction:  # False or 0/1
       if self.config.transformer_decoder_join:  # True (use a transformer decoder)
@@ -403,6 +405,7 @@ class LidarCenterNet(nn.Module):
             # print_data_info(joined_checkpoint_features)  # torch.Size([2, 11, 256])
 
           self.last_joined_features = joined_checkpoint_features
+          distill_tensors['bev_tokens'] = joined_checkpoint_features
 
           if self.config.use_prior_fuseFeat:
             aug_joined_checkpoint_features, _ = self.fuseFeat_frontdoor_encoder(joined_checkpoint_features)
@@ -439,6 +442,10 @@ class LidarCenterNet(nn.Module):
           pred_traj_logits = scores - scores.max(dim=0, keepdim=True)[0]
           pred_traj_probs = F.softmax(pred_traj_logits, dim=0)
           pred_traj_probs = torch.clamp(pred_traj_probs, min=1e-8, max=1.0)  # here we have pred traj probs
+          distill_tensors['traj_logits'] = pred_traj_logits
+          distill_tensors['traj_probs'] = pred_traj_probs
+          distill_tensors['pred_traj_probs'] = pred_traj_probs
+          distill_tensors['pred_trajectories'] = pred_trajectories
 
           if self.config.input_path_to_target_speed_network:  # 0
             ts_input = torch.cat(
@@ -447,6 +454,8 @@ class LidarCenterNet(nn.Module):
           else:
             pred_target_speed = self.target_speed_network(target_speed_features)  # here we have pred speed
             # print_data_info(pred_target_speed)  # torch.Size([2, 8])
+          distill_tensors['speed_logits'] = pred_target_speed
+          distill_tensors['pred_target_speed'] = F.softmax(pred_target_speed, dim=-1)
 
       else:
         joined_features = self.join(fused_features)
@@ -464,7 +473,10 @@ class LidarCenterNet(nn.Module):
             pred_target_speed = self.target_speed_network(ts_input)
           else:
             pred_target_speed = self.target_speed_network(target_speed_features) 
+          distill_tensors['speed_logits'] = pred_target_speed
+          distill_tensors['pred_target_speed'] = F.softmax(pred_target_speed, dim=-1)
             
+    self.latest_distill_tensors = distill_tensors if len(distill_tensors) > 0 else None
 
     # Auxiliary tasks
     pred_semantic = None

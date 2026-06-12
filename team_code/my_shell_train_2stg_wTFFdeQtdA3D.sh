@@ -23,13 +23,14 @@ STUDENT_INIT_CKPT=${TEACHER_DIR}/model_0030.pth
 
 
 torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=251122 --rdzv_backend=c10d \
-  team_code/my_train_ability_QtdOracleizeA3D.py\
-  --id demo_QtdOracleizeA3D_AbMonitor_4-gw_stg \
+  team_code/my_train_ability_wQtd_AbMoni.py\
+  --id test_AbMonitor_4-gw_stg \
   --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
   --root_dir /home/spc/b2d_mini_v2 \
   --logdir ${PROJECT_ROOT}/log \
   --use_controller_input_prediction 1 --use_wp_gru 0 --continue_epoch 0 --cpu_cores 4 \
   --freeze_backbone 1 --use_depth 0 --use_semantic 0 --detect_boxes 1 --use_bev_semantic 1 \
   --image_architecture regnety_032 --lidar_architecture regnety_032 \
-  --use_a3d 1 --a3d_ref_file ${TEACHER_DIR} \
-  --load_file ${STUDENT_INIT_CKPT}
+  --load_file ${STUDENT_INIT_CKPT} \
+  #--use_a3d 0 --a3d_ref_file ${TEACHER_DIR} \
+  

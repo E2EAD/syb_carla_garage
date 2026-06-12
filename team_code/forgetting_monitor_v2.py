@@ -24,6 +24,7 @@ class ForgettingMonitor:
     self.patience = int(patience if patience is not None else getattr(config, 'kl_patience', 3))
     self.kl_history = []
     self.last_check_step = 0
+    # self.last_metrics = {}
 
   def _inputs_from_batch(self, data_batch, device):
     lidar_key = 'temporal_lidar' if int(getattr(self.config, 'lidar_seq_len', 1)) > 1 else 'lidar'
@@ -57,6 +58,12 @@ class ForgettingMonitor:
       current_tensors = getattr(active_model, 'latest_distill_tensors', None)
       if base_tensors is None or current_tensors is None:
         kl_total = torch.tensor(0.0, device=device)
+        # self.last_metrics = {
+        #     'forgetting_kl_traj': 0.0,
+        #     'forgetting_kl_speed': 0.0,
+        #     'forgetting_has_base_tensors': float(base_tensors is not None),
+        #     'forgetting_has_current_tensors': float(current_tensors is not None),
+        # }
       else:
         kl_traj = torch.tensor(0.0, device=device)
         if 'traj_logits' in base_tensors and 'traj_logits' in current_tensors:
@@ -84,6 +91,16 @@ class ForgettingMonitor:
           )
 
         kl_total = 0.6 * kl_traj + 0.4 * kl_speed
+        # self.last_metrics = {
+        #     'forgetting_kl_traj': float(kl_traj.item()),
+        #     'forgetting_kl_speed': float(kl_speed.item()),
+        #     'forgetting_has_base_tensors': 1.0,
+        #     'forgetting_has_current_tensors': 1.0,
+        #     'forgetting_num_base_traj_anchors': float(base_tensors['traj_logits'].size(0))
+        #     if 'traj_logits' in base_tensors else 0.0,
+        #     'forgetting_num_current_traj_anchors': float(current_tensors['traj_logits'].size(0))
+        #     if 'traj_logits' in current_tensors else 0.0,
+        # }
 
     if was_training:
       current_model.train()
@@ -140,6 +157,7 @@ class ForgettingMonitor:
         'kl_history_mean': float(np.mean(self.kl_history[-10:])),
         'kl_trend': kl_trend,
     }
+    # metrics.update(self.last_metrics)
 
     if avg_kl > self.kl_threshold:
       if len(self.kl_history) >= self.patience and all(k > self.kl_threshold

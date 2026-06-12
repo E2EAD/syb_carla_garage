@@ -60,7 +60,8 @@ def align_anchor_distributions(student_anchors, teacher_anchors, teacher_probs, 
   t_flat = teacher_anchors.reshape(batch_size, teacher_anchors.size(1), -1)
 
   pairwise_l1 = torch.cdist(s_flat, t_flat, p=1) / float(t_steps * xy_dim)
-  match_temp = pairwise_l1.detach().mean(dim=(1, 2), keepdim=True).clamp_min(1e-6)
+  # match_temp = pairwise_l1.detach().mean(dim=(1, 2), keepdim=True).clamp_min(1e-6)
+  match_temp = 0.5
   assign_s_given_t = F.softmax(-pairwise_l1 / match_temp, dim=1).detach()
 
   aligned_probs = torch.einsum('bsk,bk->bs', assign_s_given_t, teacher_probs)

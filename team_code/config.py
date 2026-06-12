@@ -952,7 +952,7 @@ class GlobalConfig:
     self.oracle_kd_temperature = 1.0
     self.min_correct_anchors = 1
 
-    self.use_forgetting_monitor = 0
+    self.use_forgetting_monitor = 1
     self.monitor_kl_every = 100
     self.monitor_kl_batches = 3
     self.kl_forgetting_threshold = 0.2
@@ -961,7 +961,7 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Optional per-ability open-loop monitor
     # -----------------------------------------------------------------------------
-    self.use_ability_open_loop_monitor = 0
+    self.use_ability_open_loop_monitor = 1
     self.ability_monitor_every = 100
     self.ability_monitor_num_samples = 8
     self.ability_monitor_batch_size = 2
