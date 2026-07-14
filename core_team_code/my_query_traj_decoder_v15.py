@@ -2,6 +2,7 @@ import torch
 from torch import nn
 import numpy as np
 from config import GlobalConfig
+import os
 import json
 import torch.nn.functional as F
 
@@ -89,9 +90,15 @@ class PlanningTrajectoryDecoder(nn.Module):
     def _create_anchors(self, anchor_path=None):
         """
         Creates diverse trajectory anchors covering common driving maneuvers.
+        When no valid path/file is found, creates a single random placeholder
+        that will be replaced by the online DPMM once the buffer fills.
         """
-        if anchor_path is None:
-            print('no anchor path, return.')
+        if anchor_path is None or not os.path.isfile(anchor_path):
+            print(f'[TrajDecoder] No valid anchor path ({anchor_path}). '
+                  f'Creating random placeholder (will be replaced by DPMM).')
+            anchors = torch.randn(1, 20, dtype=torch.float32) * 0.01
+            self.register_buffer('anchors', anchors)
+            print(f'[TrajDecoder] Created {anchors.shape[0]} random placeholder anchors')
             return
         
         with open(anchor_path, 'r') as f:
@@ -228,3 +235,19 @@ class PlanningTrajectoryDecoder(nn.Module):
         scores = self.score_head(decoder_for_score).squeeze(-1)
         
         return pred_trajectories, scores
+
+    @torch.no_grad()
+    def update_anchors(self, new_anchors: torch.Tensor):
+        """Hot-swap trajectory anchors with new DPMM cluster means.
+
+        Args:
+            new_anchors: (num_anchors, 20) tensor of new trajectory anchors.
+        """
+        if new_anchors.shape[1] != self.anchors.shape[1]:
+            raise ValueError(
+                f"Anchor dim mismatch: new={new_anchors.shape[1]}, "
+                f"existing={self.anchors.shape[1]}"
+            )
+        device = self.anchors.device
+        self.anchors = new_anchors.to(device)
+        print(f"[TrajDecoder] Updated anchors: {new_anchors.shape[0]} anchors")

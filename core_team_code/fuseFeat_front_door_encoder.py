@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import math
+import os
 import json
 import pickle
 from utils import print_data_info
@@ -78,8 +79,12 @@ class FuseFeatFrontDoorEncoder(nn.Module):
             anchor_path_list: 存储fuse featanchor聚类结果的JSON文件路径列表
         """
         if anchor_path_list is None:
-            print('No fuseFeat anchor path provided, using random initialization.')
-            return None 
+            print('No fuseFeat anchor path provided. Using random placeholder '
+                  '(will be replaced by online DPMM).')
+            anchors = torch.randn(1, 256 * 11) * 0.01
+            self.register_buffer('anchors', anchors)
+            print(f'[FuseFeatFrontDoor] Created 1 random placeholder anchor, shape: {anchors.shape}')
+            return anchors
         
         # Handle both single path string and list of paths
         if isinstance(anchor_path_list, str):
@@ -88,6 +93,9 @@ class FuseFeatFrontDoorEncoder(nn.Module):
         all_clusters = []
         
         for anchor_path in anchor_path_list:
+            if not os.path.isfile(anchor_path):
+                print(f'[FuseFeatFrontDoor] File not found: {anchor_path}')
+                continue
             with open(anchor_path, 'rb') as f:
                 data = pickle.load(f)
             
@@ -104,8 +112,12 @@ class FuseFeatFrontDoorEncoder(nn.Module):
             print(f'Loaded {len(clusters)} anchors from {anchor_path}')
         
         if not all_clusters:
-            print('No valid anchor data found in any file.')
-            return None
+            print('No valid anchor data found. Using random placeholder anchors '
+                  '(will be replaced by online DPMM).')
+            anchors = torch.randn(1, 256 * 11) * 0.01
+            self.register_buffer('anchors', anchors)
+            print(f'[FuseFeatFrontDoor] Created 1 random placeholder anchor, shape: {anchors.shape}')
+            return anchors
         
         # Sort all collected clusters by cluster_id
         all_clusters.sort(key=lambda x: x['cluster_id'])
@@ -190,5 +202,21 @@ class FuseFeatFrontDoorEncoder(nn.Module):
         gate_weights = gate_weights.squeeze(-1).transpose(0, 1)  # [batch_size, 11]
         
         return enhanced_fuseFeat, gate_weights
+
+    @torch.no_grad()
+    def update_anchors(self, new_anchors: torch.Tensor):
+        """Hot-swap fused-feature anchors with new DPMM cluster means.
+
+        Args:
+            new_anchors: (num_anchors, 11*256) tensor of new fuseFeat anchors.
+        """
+        if new_anchors.shape[1] != self.anchors.shape[1]:
+            raise ValueError(
+                f"Anchor dim mismatch: new={new_anchors.shape[1]}, "
+                f"existing={self.anchors.shape[1]}"
+            )
+        device = self.anchors.device
+        self.anchors = new_anchors.to(device)
+        print(f"[FuseFeatFrontDoor] Updated anchors: {new_anchors.shape[0]} anchors")
 
 

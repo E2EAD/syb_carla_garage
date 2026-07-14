@@ -1,10 +1,26 @@
 """
 Config class that contains all the hyperparameters needed to build any model.
+
+This is the standalone config for ``core_team_code/``.
 """
 
 import os
-import carla
+import sys
 import numpy as np
+
+# carla is only needed for Color constants; use a fallback if unavailable.
+try:
+    import carla
+    _CARLA_AVAILABLE = True
+except ImportError:
+    _CARLA_AVAILABLE = False
+    # Minimal stub so global-level Color() calls don't crash.
+    class _ColorStub:  # pylint: disable=too-few-public-methods
+        def __init__(self, r=0, g=0, b=0, a=0):
+            pass
+    carla = type(sys)('carla_stub')
+    carla.Color = _ColorStub
+    print('[core_team_code/config] carla not available — using stub colors.')
 
 
 class GlobalConfig:
@@ -548,7 +564,7 @@ class GlobalConfig:
     self.use_bev_semantic = True  # Whether to use bev semantic segmentation as auxiliary loss for training.
     self.use_depth = True  # Whether to use depth prediction as auxiliary loss for training.
     self.num_repetitions = 1  # How many repetitions of the dataset we train with.
-    self.continue_epoch = True  # Whether to continue the training from the loaded epoch or from 0.
+    self.continue_epoch = False # Whether to continue the training from the loaded epoch or from 0.
 
     self.smooth_route = True  # Whether to smooth the route points with a spline.
     self.ignore_index = -999  # Index to ignore for future bounding box prediction task.
@@ -873,12 +889,14 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Traj anchors
     # -----------------------------------------------------------------------------
-    self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"  # run under project root
+    # self.prior_traj_path = "./team_code/dpmm_results/2025-11-03-15-32/track_cluster_log/4-0-0-1910-tracked_clusters.json"
+    self.prior_traj_path = ''
     self.use_random_query_tokens = False
     self.random_query_traj_num_queries = 99
     self.random_query_fuse_feat_num_queries = 24
     self.selected_ability = 'Emergency_Brake' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
-    self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
+    # self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
+    self.selected_ability_list = ['Emergency_Brake', 'Traffic_Sign', 'Merging', 'Overtaking', 'Give_Way']
     # self.trajectory_distance_threshold = 25
     # self.score_loss_weight = 1
 
@@ -1028,9 +1046,10 @@ class GlobalConfig:
     # -----------------------------------------------------------------------------
     # Fuse feat front door encoder and anchor
     # -----------------------------------------------------------------------------
-    self.use_traj_front_door_encoder = 0
-    self.use_prior_fuseFeat = 0
-    self.prior_fuseFeat_path = ["./team_code/kmeans_results/latest/tracked_clusters/all_abilities-tracked_clusters.pkl"]
+    self.use_traj_front_door_encoder = 1
+    self.use_prior_fuseFeat = 1
+    # self.prior_fuseFeat_path = ["./team_code/kmeans_results/latest/tracked_clusters/all_abilities-tracked_clusters.pkl"]
+    self.prior_fuseFeat_path = []
     self.ff_de_dim = 256  # 速度编码器维度
     self.ff_num_heads = 8  # 注意力头数
     self.ff_dropout = 0.1  # dropout率

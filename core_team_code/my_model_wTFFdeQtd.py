@@ -303,6 +303,28 @@ class LidarCenterNet(nn.Module):
     if self.config.tp_attention:
       nn.init.uniform_(self.tp_pos_embed)
 
+  @torch.no_grad()
+  def update_traj_anchors(self, new_anchors: torch.Tensor):
+    """Update trajectory anchors in both the decoder and front-door encoder.
+
+    Args:
+        new_anchors: (num_anchors, 20) tensor of new trajectory anchors.
+    """
+    if hasattr(self, 'query_traj_decoder'):
+      self.query_traj_decoder.update_anchors(new_anchors)
+    if hasattr(self, 'traj_frontdoor_encoder'):
+      self.traj_frontdoor_encoder.update_anchors(new_anchors)
+
+  @torch.no_grad()
+  def update_fusefeat_anchors(self, new_anchors: torch.Tensor):
+    """Update fused-feature anchors in the front-door encoder.
+
+    Args:
+        new_anchors: (num_anchors, 11*256) tensor of new fuseFeat anchors.
+    """
+    if hasattr(self, 'fuseFeat_frontdoor_encoder'):
+      self.fuseFeat_frontdoor_encoder.update_anchors(new_anchors)
+
   def forward(self, rgb, lidar_bev, target_point, ego_vel, command, target_point_next=None):
     bs = rgb.shape[0]
     if self.config.two_tp_input:  # False
