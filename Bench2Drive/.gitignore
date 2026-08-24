@@ -15,3 +15,5 @@ __pycache__/
 # OS & editor files
 .DS_Store
 Thumbs.db
+
+bnpy/
