@@ -877,7 +877,7 @@ class GlobalConfig:
     self.use_random_query_tokens = False
     self.random_query_traj_num_queries = 99
     self.random_query_fuse_feat_num_queries = 24
-    self.selected_ability = 'Emergency_Brake' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
+    self.selected_ability = 'Give_Way' # 'No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake'
     self.selected_ability_list = ['No_Scenario','Give_Way', 'Overtaking', 'Merging', 'Traffic_Sign', 'Emergency_Brake']
     # self.trajectory_distance_threshold = 25
     # self.score_loss_weight = 1
@@ -919,26 +919,29 @@ class GlobalConfig:
     # Branch-wise adaptive gating (trajectory and speed are gated separately).
     self.a3d_traj_beta = 5.0
     self.a3d_speed_beta = 5.0
-    self.a3d_traj_tau = 0.6
-    self.a3d_speed_tau = 0.6
+    self.a3d_traj_tau = 0.9
+    self.a3d_speed_tau = 0.9
     self.a3d_traj_lambda_max = 0.6
     self.a3d_speed_lambda_max = 0.6
     self.a3d_traj_lambda_ema = 0.8
     self.a3d_speed_lambda_ema = 0.8
 
-    # Legacy shared knobs for backward compatibility (kept for older scripts).
-    self.a3d_beta = 5.0
-    self.a3d_tau = 0.6
-    self.a3d_traj_threshold = 30.0
-    self.a3d_lambda_max = 0.6
-    self.a3d_lambda_ema = 0.8
-    # Legacy combined-score weights (not used by split-gating A3D).
-    self.a3d_w_traj = 0.5
-    self.a3d_w_speed = 0.5
-    self.a3d_kd_temperature = 2.0
-    self.a3d_traj_kd_weight = 1.0
-    self.a3d_speed_kd_weight = 1.0
-    self.a3d_offset_kd_weight = 0.5
+    # Shared knobs actually read at runtime by my_train_qtd_a3d_oracle.py.
+    self.a3d_traj_threshold = 10.0  # normalizes S_traj into [0, 1]
+    self.a3d_kd_temperature = 2.0  # KD softening temperature for the A3D KL
+    self.a3d_traj_kd_weight = 1.0  # relative weight of traj KL in plain A3D
+    self.a3d_speed_kd_weight = 1.0  # relative weight of speed KL in plain A3D
+    self.a3d_offset_kd_weight = 0.5  # relative weight of the geometry offset term
+
+    # Unused by the unified trainer (split-gating replaced them). Only the kept
+    # legacy trainers (my_train_ability_QtdA3dv2.py, ..._QtdA3dOracle*.py,
+    # ..._QtdOracleizeA3D.py) still reference these, so uncomment if you run them.
+    # self.a3d_beta = 5.0
+    # self.a3d_tau = 0.9
+    # self.a3d_lambda_max = 0.6
+    # self.a3d_lambda_ema = 0.8
+    # self.a3d_w_traj = 0.5
+    # self.a3d_w_speed = 0.5
 
     # -----------------------------------------------------------------------------
     # Oracle Distribution KD continual training
@@ -965,11 +968,17 @@ class GlobalConfig:
     self.lwf_speed_weight = 1.0
     self.lwf_offset_kd_weight = 0.0  # 0 = faithful LwF (KL only, no geometry term)
 
+    # -----------------------------------------------------------------------------
+    # Forgetting monitor (independent of the distillation method)
+    # Watches forward-KL between the frozen reference policy and the current
+    # policy on new-task batches; triggers LR decay or early stop on drift.
+    # -----------------------------------------------------------------------------
     self.use_forgetting_monitor = 0
     self.monitor_kl_every = 100
     self.monitor_kl_batches = 3
     self.kl_forgetting_threshold = 0.2
     self.kl_patience = 3
+    self.monitor_lr_decay = 0.1
 
     # -----------------------------------------------------------------------------
     # Optional per-ability open-loop monitor

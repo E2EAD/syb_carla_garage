@@ -99,6 +99,13 @@ def load_checkpoint_ignore_anchors(model, checkpoint_path, device, strict=False)
 
 
 def _select_top1_trajectory(pred_trajectories, pred_traj_probs):
+  """Select the model's own top-1 prediction: argmax of the anchor score head.
+
+  Applied identically to teacher and student in the A3D competence score, so the
+  advantage compares each model's real prediction. No GT-distance rule is used
+  to pick the trajectory here (that rule exists only inside OracleKDLoss, where
+  the GT-correct support is the point of the oracle).
+  """
   if pred_trajectories is None or pred_traj_probs is None:
     return None
   best_anchor_indices = torch.argmax(pred_traj_probs, dim=0)
@@ -646,35 +653,29 @@ def main():
                       help='Teacher model directory containing config.json and model_*.pth for A3D.')
   parser.add_argument('--a3d_traj_beta',
                       type=float,
-                      default=float(getattr(config, 'a3d_traj_beta', config.a3d_beta)))
+                      default=float(config.a3d_traj_beta))
   parser.add_argument('--a3d_speed_beta',
                       type=float,
-                      default=float(getattr(config, 'a3d_speed_beta', config.a3d_beta)))
+                      default=float(config.a3d_speed_beta))
   parser.add_argument('--a3d_traj_tau',
                       type=float,
-                      default=float(getattr(config, 'a3d_traj_tau', config.a3d_tau)))
+                      default=float(config.a3d_traj_tau))
   parser.add_argument('--a3d_speed_tau',
                       type=float,
-                      default=float(getattr(config, 'a3d_speed_tau', config.a3d_tau)))
+                      default=float(config.a3d_speed_tau))
   parser.add_argument('--a3d_traj_lambda_max',
                       type=float,
-                      default=float(getattr(config, 'a3d_traj_lambda_max', config.a3d_lambda_max)))
+                      default=float(config.a3d_traj_lambda_max))
   parser.add_argument('--a3d_speed_lambda_max',
                       type=float,
-                      default=float(getattr(config, 'a3d_speed_lambda_max', config.a3d_lambda_max)))
+                      default=float(config.a3d_speed_lambda_max))
   parser.add_argument('--a3d_traj_lambda_ema',
                       type=float,
-                      default=float(getattr(config, 'a3d_traj_lambda_ema', config.a3d_lambda_ema)))
+                      default=float(config.a3d_traj_lambda_ema))
   parser.add_argument('--a3d_speed_lambda_ema',
                       type=float,
-                      default=float(getattr(config, 'a3d_speed_lambda_ema', config.a3d_lambda_ema)))
-  parser.add_argument('--a3d_beta', type=float, default=float(config.a3d_beta))
-  parser.add_argument('--a3d_tau', type=float, default=float(config.a3d_tau))
-  parser.add_argument('--a3d_w_traj', type=float, default=float(config.a3d_w_traj))
-  parser.add_argument('--a3d_w_speed', type=float, default=float(config.a3d_w_speed))
+                      default=float(config.a3d_speed_lambda_ema))
   parser.add_argument('--a3d_traj_threshold', type=float, default=float(config.a3d_traj_threshold))
-  parser.add_argument('--a3d_lambda_max', type=float, default=float(config.a3d_lambda_max))
-  parser.add_argument('--a3d_lambda_ema', type=float, default=float(config.a3d_lambda_ema))
   parser.add_argument('--a3d_kd_temperature', type=float, default=float(config.a3d_kd_temperature))
   parser.add_argument('--a3d_traj_kd_weight', type=float, default=float(config.a3d_traj_kd_weight))
   parser.add_argument('--a3d_speed_kd_weight', type=float, default=float(config.a3d_speed_kd_weight))
@@ -1639,10 +1640,10 @@ class Engine(object):
         if t_traj_score is not None and s_traj_score is not None and t_speed_acc is not None and s_speed_acc is not None:
           traj_a_rel = torch.mean(t_traj_score - s_traj_score).detach()
           traj_ref_acc = torch.mean(t_traj_score).detach()
-          traj_beta = float(getattr(self.config, 'a3d_traj_beta', self.config.a3d_beta))
-          traj_tau = float(getattr(self.config, 'a3d_traj_tau', self.config.a3d_tau))
-          traj_lambda_decay = float(getattr(self.config, 'a3d_traj_lambda_ema', self.config.a3d_lambda_ema))
-          traj_lambda_cap = float(getattr(self.config, 'a3d_traj_lambda_max', self.config.a3d_lambda_max))
+          traj_beta = float(self.config.a3d_traj_beta)
+          traj_tau = float(self.config.a3d_traj_tau)
+          traj_lambda_decay = float(self.config.a3d_traj_lambda_ema)
+          traj_lambda_cap = float(self.config.a3d_traj_lambda_max)
 
           traj_lambda_raw = torch.sigmoid(traj_beta * traj_a_rel).item()
           if float(traj_ref_acc.item()) < traj_tau:
@@ -1653,10 +1654,10 @@ class Engine(object):
 
           speed_a_rel = torch.mean(t_speed_acc - s_speed_acc).detach()
           speed_ref_acc = torch.mean(t_speed_acc).detach()
-          speed_beta = float(getattr(self.config, 'a3d_speed_beta', self.config.a3d_beta))
-          speed_tau = float(getattr(self.config, 'a3d_speed_tau', self.config.a3d_tau))
-          speed_lambda_decay = float(getattr(self.config, 'a3d_speed_lambda_ema', self.config.a3d_lambda_ema))
-          speed_lambda_cap = float(getattr(self.config, 'a3d_speed_lambda_max', self.config.a3d_lambda_max))
+          speed_beta = float(self.config.a3d_speed_beta)
+          speed_tau = float(self.config.a3d_speed_tau)
+          speed_lambda_decay = float(self.config.a3d_speed_lambda_ema)
+          speed_lambda_cap = float(self.config.a3d_speed_lambda_max)
 
           speed_lambda_raw = torch.sigmoid(speed_beta * speed_a_rel).item()
           if float(speed_ref_acc.item()) < speed_tau:
@@ -1714,13 +1715,16 @@ class Engine(object):
 
           if not bool(getattr(self.config, 'use_oracle_kd', 0)):
             # Plain A3D (oracle off): gated teacher-KD added on top of GT losses.
+            a3d_traj_kd_w = self.config.a3d_traj_kd_weight
+            a3d_speed_kd_w = self.config.a3d_speed_kd_weight
+            a3d_offset_kd_w = self.config.a3d_offset_kd_weight
             traj_kd_combined = (
-                self.config.a3d_traj_kd_weight * loss_traj_kd +
-                self.config.a3d_offset_kd_weight * loss_offset)
+                a3d_traj_kd_w * loss_traj_kd +
+                a3d_offset_kd_w * loss_offset)
             losses['loss_a3d_total'] = (
                 torch.tensor(traj_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype) * traj_kd_combined +
                 torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype) *
-                (self.config.a3d_speed_kd_weight * loss_speed_kd))
+                (a3d_speed_kd_w * loss_speed_kd))
             losses['loss_a3d_traj_kd'] = torch.tensor(traj_lambda_kd,
                                                       device=self.device,
                                                       dtype=loss_traj_kd.dtype) * loss_traj_kd
