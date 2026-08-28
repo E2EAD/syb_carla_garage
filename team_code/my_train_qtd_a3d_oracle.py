@@ -810,8 +810,9 @@ def main():
   ngpus_per_node = torch.cuda.device_count()
   ncpus_per_node = args.cpu_cores
   num_workers = int(ncpus_per_node / ngpus_per_node)
+  persistent_workers = bool(getattr(args, 'persistent_workers', 1)) and num_workers > 0
   print('Rank:', rank, 'Device:', device, 'Num GPUs on node:', ngpus_per_node, 'Num CPUs on node:', ncpus_per_node,
-        'Num workers:', num_workers)
+        'Num workers:', num_workers, 'Persistent workers:', persistent_workers)
   torch.cuda.device(device)
   # We want the highest performance
   torch.backends.cuda.matmul.allow_tf32 = True
@@ -1115,6 +1116,7 @@ def main():
                                 generator=g_cuda,
                                 num_workers=num_workers,
                                 pin_memory=False,
+                                persistent_workers=persistent_workers,
                                 drop_last=True)
 
   if args.setting != 'all':
@@ -1130,6 +1132,7 @@ def main():
                                 generator=g_cuda,
                                 num_workers=num_workers,
                                 pin_memory=False,
+                                persistent_workers=persistent_workers,
                                 drop_last=True)
   else:
     sampler_val, dataloader_val = None, None

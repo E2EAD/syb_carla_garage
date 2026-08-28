@@ -960,7 +960,7 @@ class GlobalConfig:
     # Fixed-lambda softened-KL distillation (T=2) against the frozen previous-task
     # model, added on top of the normal GT losses (Li & Hoiem 2017, Eq. 2-4).
     # -----------------------------------------------------------------------------
-    self.use_lwf = 0
+    self.use_lwf = 1
     self.lwf_ref_file = ''  # defaults to a3d_ref_file when empty
     self.lwf_temperature = 2.0
     self.lwf_lambda = 1.0
@@ -973,18 +973,18 @@ class GlobalConfig:
     # Watches forward-KL between the frozen reference policy and the current
     # policy on new-task batches; triggers LR decay or early stop on drift.
     # -----------------------------------------------------------------------------
-    self.use_forgetting_monitor = 0
-    self.monitor_kl_every = 100
+    self.use_forgetting_monitor = 1
+    self.monitor_kl_every = 20
     self.monitor_kl_batches = 3
     self.kl_forgetting_threshold = 0.2
-    self.kl_patience = 3
-    self.monitor_lr_decay = 0.1
+    self.kl_patience = 30
+    self.monitor_lr_decay = 1
 
     # -----------------------------------------------------------------------------
     # Optional per-ability open-loop monitor
     # -----------------------------------------------------------------------------
-    self.use_ability_open_loop_monitor = 0
-    self.ability_monitor_every = 100
+    self.use_ability_open_loop_monitor = 1
+    self.ability_monitor_every = 20
     self.ability_monitor_num_samples = 8
     self.ability_monitor_batch_size = 2
     self.ability_monitor_num_workers = 0
