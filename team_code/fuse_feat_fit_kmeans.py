@@ -20,7 +20,7 @@ from torch.utils.data import DataLoader
 
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
-from my_model_wTFFdeQtd import LidarCenterNet
+from my_model_qtd import LidarCenterNet
 
 jsonpickle_numpy.register_handlers()
 jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)

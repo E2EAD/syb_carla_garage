@@ -57,7 +57,7 @@ except ImportError:
 # parent_dir = os.path.dirname(current_dir)
 # sys.path.insert(0, parent_dir)
 # Import your model and data classes
-from my_model_wTFFdeQtd import LidarCenterNet
+from my_model_qtd import LidarCenterNet
 from ability_data import Ability_CARLA_Data
 from config import GlobalConfig
 import transfuser_utils as t_u

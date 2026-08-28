@@ -952,6 +952,19 @@ class GlobalConfig:
     self.oracle_kd_temperature = 1.0
     self.min_correct_anchors = 1
 
+    # -----------------------------------------------------------------------------
+    # LwF (Learning without Forgetting) continual distillation
+    # Fixed-lambda softened-KL distillation (T=2) against the frozen previous-task
+    # model, added on top of the normal GT losses (Li & Hoiem 2017, Eq. 2-4).
+    # -----------------------------------------------------------------------------
+    self.use_lwf = 0
+    self.lwf_ref_file = ''  # defaults to a3d_ref_file when empty
+    self.lwf_temperature = 2.0
+    self.lwf_lambda = 1.0
+    self.lwf_traj_weight = 1.0
+    self.lwf_speed_weight = 1.0
+    self.lwf_offset_kd_weight = 0.0  # 0 = faithful LwF (KL only, no geometry term)
+
     self.use_forgetting_monitor = 0
     self.monitor_kl_every = 100
     self.monitor_kl_batches = 3

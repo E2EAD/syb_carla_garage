@@ -12,7 +12,7 @@ import time
 import resource
 
 # Import your existing modules
-from my_model_wTFFdeQtd import LidarCenterNet
+from my_model_qtd import LidarCenterNet
 from config import GlobalConfig
 from ability_data import Ability_CARLA_Data
 from torch.utils.data import DataLoader

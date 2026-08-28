@@ -31,11 +31,12 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_wTFFdeQtd import LidarCenterNet
+from my_model_qtd import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
 from forgetting_monitor_v2 import ForgettingMonitor
+from oracle_kd_loss import OracleKDLoss
 
 jsonpickle_numpy.register_handlers()
 jsonpickle.set_encoder_options('json', sort_keys=True, indent=4)
@@ -113,6 +114,28 @@ def unwrap_model(model):
   return model
 
 
+def _compute_speed_acc_from_logits(speed_logits, target_speed):
+  if speed_logits is None:
+    return None
+  if target_speed.dtype in (torch.float16, torch.float32, torch.float64):
+    target_idx = torch.argmax(target_speed, dim=1)
+  else:
+    target_idx = target_speed
+  pred_idx = torch.argmax(speed_logits, dim=1)
+  return (pred_idx == target_idx).float()
+
+
+def _compute_traj_score(pred_trajectories, pred_traj_probs, checkpoint, config):
+  top1_traj = _select_top1_trajectory(pred_trajectories, pred_traj_probs)
+  if top1_traj is None:
+    return None
+  with torch.no_grad():
+    traj_l1 = torch.norm(top1_traj - checkpoint, dim=-1).sum(dim=-1)  # (B,)
+    traj_score = 1.0 - (traj_l1 / float(config.a3d_traj_threshold))
+    traj_score = torch.clamp(traj_score, min=0.0, max=1.0)
+  return traj_score
+
+
 def load_config_from_training_dir(config_dir):
   config_path = os.path.join(config_dir, 'config.json')
   if not os.path.isfile(config_path):
@@ -147,6 +170,47 @@ def load_ref_model_from_dir(ref_dir, device):
   ref_model.eval()
   ref_model.requires_grad_(False)
   return ref_model, ref_ckpt
+
+
+def _safe_kl(student_logits, teacher_logits, temperature):
+  s_log = F.log_softmax(student_logits / temperature, dim=-1)
+  t_prob = F.softmax(teacher_logits / temperature, dim=-1)
+  return F.kl_div(s_log, t_prob, reduction='batchmean') * (temperature**2)
+
+
+def _safe_kl_with_target_probs(student_logits, target_probs, temperature):
+  """KL with externally prepared target probs on the same support as student_logits."""
+  s_log = F.log_softmax(student_logits / temperature, dim=-1)
+  t_prob = torch.clamp(target_probs, min=1e-8)
+  t_prob = t_prob / t_prob.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+  return F.kl_div(s_log, t_prob, reduction='batchmean') * (temperature**2)
+
+
+def _align_teacher_traj_prob_to_student(student_traj, teacher_traj, teacher_prob):
+  """
+  Align teacher trajectory distribution to student anchors using soft geometry matching.
+  student_traj: (B, Ks, T, 2), teacher_traj: (B, Kt, T, 2), teacher_prob: (B, Kt)
+  """
+  bsz, _, t_steps, xy_dim = student_traj.shape
+  s_flat = student_traj.reshape(bsz, student_traj.size(1), -1)
+  t_flat = teacher_traj.reshape(bsz, teacher_traj.size(1), -1)
+
+  # (B, Ks, Kt): average per-point L1 between every student-teacher trajectory pair.
+  pairwise_l1 = torch.cdist(s_flat, t_flat, p=1) / float(t_steps * xy_dim)
+
+  # Batch-adaptive temperature keeps matching stable across scenes/speeds.
+  match_temp = pairwise_l1.detach().mean(dim=(1, 2), keepdim=True).clamp_min(1e-6)
+  assign_s_given_t = F.softmax(-pairwise_l1 / match_temp, dim=1)
+  assign_s_given_t = assign_s_given_t.detach()
+
+  teacher_prob_on_student = torch.einsum('bsk,bk->bs', assign_s_given_t, teacher_prob)
+  teacher_prob_on_student = torch.clamp(teacher_prob_on_student, min=1e-8)
+  teacher_prob_on_student = teacher_prob_on_student / teacher_prob_on_student.sum(dim=-1,
+                                                                                   keepdim=True).clamp_min(1e-8)
+
+  # For each teacher anchor, expected matched distance on student anchors.
+  expected_teacher_to_student_l1 = torch.sum(assign_s_given_t * pairwise_l1, dim=1)
+  return teacher_prob_on_student, expected_teacher_to_student_l1
 
 
 def build_ability_monitor_loaders(config, shared_dict, rank):
@@ -572,6 +636,105 @@ def main():
                       type=float,
                       default=float(getattr(config, 'monitor_lr_decay', 0.1)),
                       help='Learning-rate multiplier used when forgetting monitor requests reduce_lr.')
+  parser.add_argument('--use_a3d',
+                      type=int,
+                      default=int(config.use_a3d),
+                      help='Enable Advantage-Anchored Adaptive Distillation (A3D) against the frozen reference model.')
+  parser.add_argument('--a3d_ref_file',
+                      type=str,
+                      default=str(config.a3d_ref_file),
+                      help='Teacher model directory containing config.json and model_*.pth for A3D.')
+  parser.add_argument('--a3d_traj_beta',
+                      type=float,
+                      default=float(getattr(config, 'a3d_traj_beta', config.a3d_beta)))
+  parser.add_argument('--a3d_speed_beta',
+                      type=float,
+                      default=float(getattr(config, 'a3d_speed_beta', config.a3d_beta)))
+  parser.add_argument('--a3d_traj_tau',
+                      type=float,
+                      default=float(getattr(config, 'a3d_traj_tau', config.a3d_tau)))
+  parser.add_argument('--a3d_speed_tau',
+                      type=float,
+                      default=float(getattr(config, 'a3d_speed_tau', config.a3d_tau)))
+  parser.add_argument('--a3d_traj_lambda_max',
+                      type=float,
+                      default=float(getattr(config, 'a3d_traj_lambda_max', config.a3d_lambda_max)))
+  parser.add_argument('--a3d_speed_lambda_max',
+                      type=float,
+                      default=float(getattr(config, 'a3d_speed_lambda_max', config.a3d_lambda_max)))
+  parser.add_argument('--a3d_traj_lambda_ema',
+                      type=float,
+                      default=float(getattr(config, 'a3d_traj_lambda_ema', config.a3d_lambda_ema)))
+  parser.add_argument('--a3d_speed_lambda_ema',
+                      type=float,
+                      default=float(getattr(config, 'a3d_speed_lambda_ema', config.a3d_lambda_ema)))
+  parser.add_argument('--a3d_beta', type=float, default=float(config.a3d_beta))
+  parser.add_argument('--a3d_tau', type=float, default=float(config.a3d_tau))
+  parser.add_argument('--a3d_w_traj', type=float, default=float(config.a3d_w_traj))
+  parser.add_argument('--a3d_w_speed', type=float, default=float(config.a3d_w_speed))
+  parser.add_argument('--a3d_traj_threshold', type=float, default=float(config.a3d_traj_threshold))
+  parser.add_argument('--a3d_lambda_max', type=float, default=float(config.a3d_lambda_max))
+  parser.add_argument('--a3d_lambda_ema', type=float, default=float(config.a3d_lambda_ema))
+  parser.add_argument('--a3d_kd_temperature', type=float, default=float(config.a3d_kd_temperature))
+  parser.add_argument('--a3d_traj_kd_weight', type=float, default=float(config.a3d_traj_kd_weight))
+  parser.add_argument('--a3d_speed_kd_weight', type=float, default=float(config.a3d_speed_kd_weight))
+  parser.add_argument('--a3d_offset_kd_weight', type=float, default=float(config.a3d_offset_kd_weight))
+  parser.add_argument('--use_lwf',
+                      type=int,
+                      default=int(getattr(config, 'use_lwf', 0)),
+                      help='Enable Learning without Forgetting (LwF): fixed-lambda softened-KL distillation against the frozen reference model on top of GT losses.')
+  parser.add_argument('--lwf_ref_file',
+                      type=str,
+                      default=str(getattr(config, 'lwf_ref_file', '')),
+                      help='LwF teacher model directory containing config.json and model_*.pth. Falls back to --a3d_ref_file when empty.')
+  parser.add_argument('--lwf_temperature',
+                      type=float,
+                      default=float(getattr(config, 'lwf_temperature', 2.0)),
+                      help='Softening temperature for LwF distillation (paper: T=2).')
+  parser.add_argument('--lwf_lambda',
+                      type=float,
+                      default=float(getattr(config, 'lwf_lambda', 1.0)),
+                      help='Fixed LwF balance weight (paper: lambda_o=1).')
+  parser.add_argument('--lwf_traj_weight',
+                      type=float,
+                      default=float(getattr(config, 'lwf_traj_weight', 1.0)),
+                      help='Relative weight of the trajectory LwF KL before lambda.')
+  parser.add_argument('--lwf_speed_weight',
+                      type=float,
+                      default=float(getattr(config, 'lwf_speed_weight', 1.0)),
+                      help='Relative weight of the speed LwF KL before lambda.')
+  parser.add_argument('--lwf_offset_kd_weight',
+                      type=float,
+                      default=float(getattr(config, 'lwf_offset_kd_weight', 0.0)),
+                      help='Optional geometry offset term for LwF (0 = faithful LwF, KL only).')
+  parser.add_argument('--use_oracle_kd',
+                      type=int,
+                      default=int(getattr(config, 'use_oracle_kd', 0)),
+                      help='Enable Oracle Distribution KL training (oracleized GT supervision).')
+  parser.add_argument('--oracle_traj_threshold',
+                      type=float,
+                      default=float(getattr(config, 'oracle_traj_threshold', 2.0)),
+                      help='Distance threshold defining the GT-correct anchor support for oracle KD.')
+  parser.add_argument('--oracle_kd_traj_weight',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_traj_weight', 0.3)),
+                      help='Loss weight for trajectory oracle KL before global normalization.')
+  parser.add_argument('--oracle_kd_speed_weight',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_speed_weight', 0.2)),
+                      help='Loss weight for speed oracle KL before global normalization.')
+  parser.add_argument('--oracle_kd_traj_l1_weight',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_traj_l1_weight', 0.0)),
+                      help='Optional extra weight for top-1 trajectory L1 from Oracle KD.')
+  parser.add_argument('--oracle_kd_temperature',
+                      type=float,
+                      default=float(getattr(config, 'oracle_kd_temperature', 1.0)),
+                      help='Temperature for Oracle KL.')
+  parser.add_argument('--min_correct_anchors',
+                      type=int,
+                      default=int(getattr(config, 'min_correct_anchors', 1)),
+                      help='Minimum correct anchors per sample; nearest anchors are used as fallback.')
   parser.add_argument('--use_ability_open_loop_monitor',
                       type=int,
                       default=int(getattr(config, 'use_ability_open_loop_monitor', 0)),
@@ -679,6 +842,65 @@ def main():
   if not config.use_controller_input_prediction:
     config.detailed_loss_weights['loss_target_speed'] = 0.0
     config.detailed_loss_weights['loss_checkpoint'] = 0.0
+
+  # ---------------- A3D / Oracle continual distillation loss wiring ----------------
+  # Distillation methods are mutually exclusive baselines.
+  if (bool(getattr(config, 'use_lwf', 0)) and
+      (bool(config.use_a3d) or bool(config.use_oracle_kd))):
+    raise ValueError('LwF, A3D and Oracle KD are mutually exclusive. Enable only one.')
+
+  # LwF: fixed-lambda softened-KL distillation on top of GT supervision (GT stays ON).
+  for lwf_key in ('loss_lwf_traj_kd', 'loss_lwf_speed_kd', 'loss_lwf_offset_kd'):
+    if bool(getattr(config, 'use_lwf', 0)):
+      if lwf_key == 'loss_lwf_offset_kd' and float(getattr(config, 'lwf_offset_kd_weight', 0.0)) <= 0.0:
+        config.detailed_loss_weights[lwf_key] = 0.0  # offset term disabled by default (faithful LwF)
+      else:
+        config.detailed_loss_weights[lwf_key] = 1.0
+    else:
+      config.detailed_loss_weights[lwf_key] = 0.0
+
+  if bool(config.use_oracle_kd):
+    # Oracleized GT: replace direct GT traj/speed supervision with oracle-conditioned
+    # distillation targets (teacher distribution renormalized over the GT-correct support).
+    config.detailed_loss_weights['loss_target_speed'] = 0.0
+    config.detailed_loss_weights['loss_traj_kl_div'] = 0.0
+    config.detailed_loss_weights['loss_weighted_regression'] = 0.0
+    config.detailed_loss_weights['loss_best_trajectory'] = 0.0
+    config.detailed_loss_weights['loss_speed_kl_div'] = 0.0
+    config.detailed_loss_weights['loss_traj_bce'] = 0.0
+    config.detailed_loss_weights['sample_loss_weighted_regression'] = 0.0
+    config.detailed_loss_weights['sample_loss_best_trajectory'] = 0.0
+    config.detailed_loss_weights['sample_loss_kl_div'] = 0.0
+
+  # Plain A3D: teacher-gated KD kept on top of GT supervision (QtdA3dv2 recipe).
+  for a3d_key in ('loss_a3d_total', 'loss_a3d_traj_kd', 'loss_a3d_speed_kd', 'loss_a3d_offset_kd'):
+    if bool(config.use_a3d) and not bool(config.use_oracle_kd):
+      config.detailed_loss_weights[a3d_key] = 1.0
+    else:
+      config.detailed_loss_weights[a3d_key] = 0.0
+
+  # Oracle-only additive distillation (A3D off, oracle on).
+  for oracle_key in ('loss_traj_oracle_kl', 'loss_speed_oracle_kl', 'loss_traj_l1'):
+    if bool(config.use_oracle_kd) and not bool(config.use_a3d):
+      if oracle_key == 'loss_traj_oracle_kl':
+        config.detailed_loss_weights[oracle_key] = float(config.oracle_kd_traj_weight)
+      elif oracle_key == 'loss_speed_oracle_kl':
+        config.detailed_loss_weights[oracle_key] = float(config.oracle_kd_speed_weight)
+      elif oracle_key == 'loss_traj_l1':
+        config.detailed_loss_weights[oracle_key] = float(config.oracle_kd_traj_l1_weight)
+    else:
+      config.detailed_loss_weights[oracle_key] = 0.0
+
+  # Oracleized A3D: the A3D gate blends teacher-KD <-> oracle-KD.
+  for blend_key in ('loss_a3d_oracle_traj', 'loss_a3d_oracle_speed'):
+    if (bool(config.use_a3d) and bool(config.use_oracle_kd) and
+        (not config.use_plant) and bool(config.use_controller_input_prediction)):
+      if blend_key.endswith('traj'):
+        config.detailed_loss_weights[blend_key] = float(config.oracle_kd_traj_weight)
+      else:
+        config.detailed_loss_weights[blend_key] = float(config.oracle_kd_speed_weight)
+    else:
+      config.detailed_loss_weights[blend_key] = 0.0
 
   if not config.use_wp_gru:
     config.detailed_loss_weights['loss_wp'] = 0.0
@@ -835,15 +1057,33 @@ def main():
     model = torch.compile(model, mode=args.compile_mode)
     print('Compiled model')
 
+  # One frozen reference model serves LwF/A3D teacher, oracle-KD base and forgetting monitor.
   ref_model = None
-  if bool(getattr(config, 'use_forgetting_monitor', 0)):
-    ref_dir = str(getattr(config, 'oracle_ref_file', '')).strip()
+  if bool(getattr(config, 'use_lwf', 0)):
+    ref_dir = str(getattr(config, 'lwf_ref_file', '')).strip()
     if ref_dir == '':
-      raise ValueError('Forgetting monitor is enabled but --oracle_ref_file is empty.')
+      ref_dir = str(config.a3d_ref_file)
+  elif bool(config.use_a3d):
+    ref_dir = config.a3d_ref_file
+  else:
+    ref_dir = str(getattr(config, 'oracle_ref_file', '')).strip()
+  needs_ref = (
+      bool(config.use_a3d) or
+      bool(getattr(config, 'use_lwf', 0)) or
+      bool(getattr(config, 'use_forgetting_monitor', 0)) or
+      (bool(getattr(config, 'use_oracle_kd', 0)) and ref_dir != '')
+  )
+  if needs_ref and ref_dir != '':
     ref_model, ref_ckpt = load_ref_model_from_dir(ref_dir, device)
     if rank == 0:
-      print(f'Loading frozen forgetting-monitor reference dir: {ref_dir}', flush=True)
-      print(f'Forgetting-monitor reference checkpoint selected: {ref_ckpt}', flush=True)
+      print(f'Loading frozen reference model dir: {ref_dir}', flush=True)
+      print(f'Reference checkpoint selected: {ref_ckpt}', flush=True)
+  elif bool(config.use_a3d):
+    raise ValueError('A3D is enabled but --a3d_ref_file is empty.')
+  elif bool(getattr(config, 'use_lwf', 0)):
+    raise ValueError('LwF is enabled but --lwf_ref_file (or --a3d_ref_file) is empty.')
+  elif bool(getattr(config, 'use_forgetting_monitor', 0)):
+    raise ValueError('Forgetting monitor is enabled but --oracle_ref_file is empty.')
 
   if bool(args.zero_redundancy_optimizer):
     # Saves GPU memory during DDP training
@@ -1021,11 +1261,40 @@ class Engine(object):
       pathlib.Path(self.vis_save_path).mkdir(parents=True, exist_ok=True)
 
     self.detailed_loss_weights = config.detailed_loss_weights
+    self.oracle_loss_fn = OracleKDLoss(config, base_model=ref_model) if (
+        bool(getattr(config, 'use_oracle_kd', 0)) and not config.use_plant) else None
     self.forgetting_monitor = ForgettingMonitor(ref_model, config) if (
         bool(getattr(config, 'use_forgetting_monitor', 0)) and ref_model is not None and not config.use_plant) else None
     if self.rank == 0:
+      print(f'A3D enabled: {bool(getattr(config, "use_a3d", 0)) and ref_model is not None}', flush=True)
+      print(f'LwF enabled: {bool(getattr(config, "use_lwf", 0)) and ref_model is not None}', flush=True)
+      print(f'Oracle KD enabled: {self.oracle_loss_fn is not None}', flush=True)
       print(f'Forgetting monitor enabled: {self.forgetting_monitor is not None}', flush=True)
       print(f'Ability open-loop monitor enabled: {bool(self.ability_monitor_loaders)}', flush=True)
+    self.a3d_lambda_ema = 0.0
+    self.a3d_traj_lambda_ema = 0.0
+    self.a3d_speed_lambda_ema = 0.0
+    self.a3d_monitor_tags = {
+        'a3d_traj_advantage': 'traj_a_rel',
+        'a3d_traj_ref_score': 'traj_ref_acc',
+        'a3d_traj_active_score': 'traj_active_score',
+        'a3d_traj_lambda_raw': 'traj_lambda_raw',
+        'a3d_traj_lambda_ema': 'traj_lambda_ema',
+        'a3d_traj_lambda_kd': 'traj_lambda_kd',
+        'a3d_speed_advantage': 'speed_a_rel',
+        'a3d_speed_ref_score': 'speed_ref_acc',
+        'a3d_speed_active_score': 'speed_active_score',
+        'a3d_speed_lambda_raw': 'speed_lambda_raw',
+        'a3d_speed_lambda_ema': 'speed_lambda_ema',
+        'a3d_speed_lambda_kd': 'speed_lambda_kd',
+        'a3d_lambda': 'lambda_kd_avg',
+    }
+    self.oracle_monitor_tags = {
+        'loss_a3d_oracle_traj': 'a3d_oracle_traj',
+        'loss_a3d_oracle_speed': 'a3d_oracle_speed',
+        'speed_acc': 'speed_acc',
+        'oracle_correct_anchor_rate': 'correct_anchor_rate',
+    }
 
   def _apply_forgetting_lr_decay(self, decay_factor):
     decay_factor = float(decay_factor)
@@ -1329,6 +1598,234 @@ class Engine(object):
 
     # Compute metrics for logging
     metrics = {}
+
+    # ---------------- A3D / Oracle continual distillation (train only) ----------------
+    teacher_tensors_for_oracle = None
+    a3d_traj_ref_loss = None
+    a3d_speed_ref_loss = None
+    a3d_traj_lambda = None
+    a3d_speed_lambda = None
+    base_model = unwrap_model(self.model)
+
+    # A3D: adaptive teacher-gated KD against the frozen reference model.
+    if bool(self.config.use_a3d) and (self.ref_model is not None) and (not validation) and (not self.config.use_plant):
+      with torch.no_grad():
+        _ = self.ref_model(rgb=rgb,
+                           lidar_bev=lidar,
+                           target_point=target_point,
+                           ego_vel=ego_vel,
+                           command=command,
+                           target_point_next=target_point_next if self.config.two_tp_input else None)
+        teacher_tensors = self.ref_model.latest_distill_tensors
+        teacher_tensors_for_oracle = teacher_tensors
+
+      student_tensors = base_model.latest_distill_tensors
+      if teacher_tensors is not None and student_tensors is not None:
+        t_traj_score = _compute_traj_score(
+            teacher_tensors.get('pred_trajectories'),
+            teacher_tensors.get('traj_probs', teacher_tensors.get('pred_traj_probs')),
+            checkpoint,
+            self.config,
+        )
+        s_traj_score = _compute_traj_score(
+            student_tensors.get('pred_trajectories'),
+            student_tensors.get('traj_probs', student_tensors.get('pred_traj_probs')),
+            checkpoint,
+            self.config,
+        )
+        t_speed_acc = _compute_speed_acc_from_logits(teacher_tensors.get('speed_logits'), target_speed)
+        s_speed_acc = _compute_speed_acc_from_logits(student_tensors.get('speed_logits'), target_speed)
+
+        if t_traj_score is not None and s_traj_score is not None and t_speed_acc is not None and s_speed_acc is not None:
+          traj_a_rel = torch.mean(t_traj_score - s_traj_score).detach()
+          traj_ref_acc = torch.mean(t_traj_score).detach()
+          traj_beta = float(getattr(self.config, 'a3d_traj_beta', self.config.a3d_beta))
+          traj_tau = float(getattr(self.config, 'a3d_traj_tau', self.config.a3d_tau))
+          traj_lambda_decay = float(getattr(self.config, 'a3d_traj_lambda_ema', self.config.a3d_lambda_ema))
+          traj_lambda_cap = float(getattr(self.config, 'a3d_traj_lambda_max', self.config.a3d_lambda_max))
+
+          traj_lambda_raw = torch.sigmoid(traj_beta * traj_a_rel).item()
+          if float(traj_ref_acc.item()) < traj_tau:
+            traj_lambda_raw = 0.0
+          self.a3d_traj_lambda_ema = (traj_lambda_decay * self.a3d_traj_lambda_ema +
+                                      (1.0 - traj_lambda_decay) * traj_lambda_raw)
+          traj_lambda_kd = min(traj_lambda_cap, self.a3d_traj_lambda_ema)
+
+          speed_a_rel = torch.mean(t_speed_acc - s_speed_acc).detach()
+          speed_ref_acc = torch.mean(t_speed_acc).detach()
+          speed_beta = float(getattr(self.config, 'a3d_speed_beta', self.config.a3d_beta))
+          speed_tau = float(getattr(self.config, 'a3d_speed_tau', self.config.a3d_tau))
+          speed_lambda_decay = float(getattr(self.config, 'a3d_speed_lambda_ema', self.config.a3d_lambda_ema))
+          speed_lambda_cap = float(getattr(self.config, 'a3d_speed_lambda_max', self.config.a3d_lambda_max))
+
+          speed_lambda_raw = torch.sigmoid(speed_beta * speed_a_rel).item()
+          if float(speed_ref_acc.item()) < speed_tau:
+            speed_lambda_raw = 0.0
+          self.a3d_speed_lambda_ema = (speed_lambda_decay * self.a3d_speed_lambda_ema +
+                                       (1.0 - speed_lambda_decay) * speed_lambda_raw)
+          speed_lambda_kd = min(speed_lambda_cap, self.a3d_speed_lambda_ema)
+
+          t_kd = self.config.a3d_kd_temperature
+          s_traj_logits = student_tensors['traj_logits'].transpose(0, 1)
+          t_traj_logits = teacher_tensors['traj_logits'].transpose(0, 1).detach()
+          t_traj_prob = F.softmax(t_traj_logits / t_kd, dim=-1).detach()
+
+          s_speed_logits = student_tensors['speed_logits']
+          t_speed_logits = teacher_tensors['speed_logits'].detach()
+          loss_speed_kd = _safe_kl(s_speed_logits, t_speed_logits, t_kd)
+
+          # Align teacher trajectory distribution to student anchors for dynamic prototype sets.
+          s_traj = student_tensors['pred_trajectories'].permute(1, 0, 2, 3)
+          t_traj = teacher_tensors['pred_trajectories'].permute(1, 0, 2, 3).detach()
+          t_prob_on_s, matched_t2s_l1 = _align_teacher_traj_prob_to_student(s_traj, t_traj, t_traj_prob)
+
+          # KL on aligned support (student anchors).
+          loss_traj_kd = _safe_kl_with_target_probs(s_traj_logits, t_prob_on_s, t_kd)
+
+          # Teacher-weighted expected geometry mismatch under soft matching.
+          loss_offset = torch.mean(torch.sum(matched_t2s_l1 * t_traj_prob, dim=-1))
+
+          a3d_traj_ref_loss = loss_traj_kd + self.config.a3d_offset_kd_weight * loss_offset
+          a3d_speed_ref_loss = loss_speed_kd
+          a3d_traj_lambda = torch.tensor(traj_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype)
+          a3d_speed_lambda = torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype)
+
+          avg_lambda_kd = 0.5 * (traj_lambda_kd + speed_lambda_kd)
+          self.a3d_lambda_ema = avg_lambda_kd
+          losses['a3d_lambda'] = torch.tensor(avg_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype)
+
+          losses['a3d_traj_advantage'] = traj_a_rel
+          losses['a3d_traj_ref_score'] = traj_ref_acc
+          losses['a3d_traj_active_score'] = torch.mean(s_traj_score).detach()
+          losses['a3d_traj_lambda_raw'] = torch.tensor(traj_lambda_raw, device=self.device, dtype=loss_traj_kd.dtype)
+          losses['a3d_traj_lambda_ema'] = torch.tensor(self.a3d_traj_lambda_ema,
+                                                       device=self.device,
+                                                       dtype=loss_traj_kd.dtype)
+          losses['a3d_traj_lambda_kd'] = torch.tensor(traj_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype)
+
+          losses['a3d_speed_advantage'] = speed_a_rel
+          losses['a3d_speed_ref_score'] = speed_ref_acc
+          losses['a3d_speed_active_score'] = torch.mean(s_speed_acc).detach()
+          losses['a3d_speed_lambda_raw'] = torch.tensor(speed_lambda_raw, device=self.device, dtype=loss_speed_kd.dtype)
+          losses['a3d_speed_lambda_ema'] = torch.tensor(self.a3d_speed_lambda_ema,
+                                                        device=self.device,
+                                                        dtype=loss_speed_kd.dtype)
+          losses['a3d_speed_lambda_kd'] = torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype)
+
+          if not bool(getattr(self.config, 'use_oracle_kd', 0)):
+            # Plain A3D (oracle off): gated teacher-KD added on top of GT losses.
+            traj_kd_combined = (
+                self.config.a3d_traj_kd_weight * loss_traj_kd +
+                self.config.a3d_offset_kd_weight * loss_offset)
+            losses['loss_a3d_total'] = (
+                torch.tensor(traj_lambda_kd, device=self.device, dtype=loss_traj_kd.dtype) * traj_kd_combined +
+                torch.tensor(speed_lambda_kd, device=self.device, dtype=loss_speed_kd.dtype) *
+                (self.config.a3d_speed_kd_weight * loss_speed_kd))
+            losses['loss_a3d_traj_kd'] = torch.tensor(traj_lambda_kd,
+                                                      device=self.device,
+                                                      dtype=loss_traj_kd.dtype) * loss_traj_kd
+            losses['loss_a3d_speed_kd'] = torch.tensor(speed_lambda_kd,
+                                                       device=self.device,
+                                                       dtype=loss_speed_kd.dtype) * loss_speed_kd
+            losses['loss_a3d_offset_kd'] = torch.tensor(traj_lambda_kd,
+                                                        device=self.device,
+                                                        dtype=loss_offset.dtype) * loss_offset
+
+    # LwF (Learning without Forgetting): fixed-lambda softened-KL distillation against
+    # the frozen previous-task model, added on top of the GT losses (Li & Hoiem 2017).
+    if (bool(getattr(self.config, 'use_lwf', 0)) and (self.ref_model is not None) and
+        (not validation) and (not self.config.use_plant)):
+      with torch.no_grad():
+        _ = self.ref_model(rgb=rgb,
+                           lidar_bev=lidar,
+                           target_point=target_point,
+                           ego_vel=ego_vel,
+                           command=command,
+                           target_point_next=target_point_next if self.config.two_tp_input else None)
+        teacher_tensors = self.ref_model.latest_distill_tensors
+
+      student_tensors = base_model.latest_distill_tensors
+      if teacher_tensors is not None and student_tensors is not None:
+        t_kd = float(getattr(self.config, 'lwf_temperature', 2.0))
+        lwf_lambda = float(getattr(self.config, 'lwf_lambda', 1.0))
+        lwf_traj_w = float(getattr(self.config, 'lwf_traj_weight', 1.0))
+        lwf_speed_w = float(getattr(self.config, 'lwf_speed_weight', 1.0))
+
+        s_traj_logits = student_tensors['traj_logits'].transpose(0, 1)
+        t_traj_logits = teacher_tensors['traj_logits'].transpose(0, 1).detach()
+        t_traj_prob = F.softmax(t_traj_logits / t_kd, dim=-1).detach()
+
+        s_speed_logits = student_tensors['speed_logits']
+        t_speed_logits = teacher_tensors['speed_logits'].detach()
+        loss_speed_kd = _safe_kl(s_speed_logits, t_speed_logits, t_kd)
+
+        # Align teacher trajectory distribution to student anchors (infrastructure).
+        s_traj = student_tensors['pred_trajectories'].permute(1, 0, 2, 3)
+        t_traj = teacher_tensors['pred_trajectories'].permute(1, 0, 2, 3).detach()
+        t_prob_on_s, matched_t2s_l1 = _align_teacher_traj_prob_to_student(s_traj, t_traj, t_traj_prob)
+        loss_traj_kd = _safe_kl_with_target_probs(s_traj_logits, t_prob_on_s, t_kd)
+
+        losses['loss_lwf_traj_kd'] = (torch.tensor(lwf_lambda * lwf_traj_w, device=self.device,
+                                                   dtype=loss_traj_kd.dtype) * loss_traj_kd)
+        losses['loss_lwf_speed_kd'] = (torch.tensor(lwf_lambda * lwf_speed_w, device=self.device,
+                                                    dtype=loss_speed_kd.dtype) * loss_speed_kd)
+        if float(getattr(self.config, 'lwf_offset_kd_weight', 0.0)) > 0.0:
+          loss_offset = torch.mean(torch.sum(matched_t2s_l1 * t_traj_prob, dim=-1))
+          losses['loss_lwf_offset_kd'] = (torch.tensor(lwf_lambda * self.config.lwf_offset_kd_weight,
+                                                       device=self.device,
+                                                       dtype=loss_offset.dtype) * loss_offset)
+
+    # Oracle KD: teacher distribution renormalized over the GT-correct support.
+    if self.oracle_loss_fn is not None and (not validation) and (not self.config.use_plant):
+      base_tensors = None
+      if self.ref_model is not None:
+        if teacher_tensors_for_oracle is None:
+          with torch.no_grad():
+            _ = self.ref_model(rgb=rgb,
+                               lidar_bev=lidar,
+                               target_point=target_point,
+                               ego_vel=ego_vel,
+                               command=command,
+                               target_point_next=target_point_next if self.config.two_tp_input else None)
+            teacher_tensors_for_oracle = self.ref_model.latest_distill_tensors
+        base_tensors = teacher_tensors_for_oracle
+
+      oracle_components, oracle_metrics = self.oracle_loss_fn.compute_components(
+          student_tensors=base_model.latest_distill_tensors,
+          gt_data=data,
+          base_tensors=base_tensors,
+      )
+      metrics.update({key: float(value.detach().item()) for key, value in oracle_metrics.items()})
+
+      if bool(self.config.use_a3d) and (self.ref_model is not None):
+        # Oracleized A3D: the gate lambda blends teacher-KD <-> oracle-KD.
+        if a3d_traj_ref_loss is not None and a3d_traj_lambda is not None and 'traj_oracle_kl' in oracle_components:
+          losses['loss_a3d_oracle_traj'] = (
+              a3d_traj_lambda * a3d_traj_ref_loss +
+              (1.0 - a3d_traj_lambda) * oracle_components['traj_oracle_kl']
+          )
+
+        if a3d_speed_ref_loss is not None and a3d_speed_lambda is not None and 'speed_oracle_kl' in oracle_components:
+          losses['loss_a3d_oracle_speed'] = (
+              a3d_speed_lambda * a3d_speed_ref_loss +
+              (1.0 - a3d_speed_lambda) * oracle_components['speed_oracle_kl']
+          )
+      else:
+        # Oracle-only additive distillation (A3D off).
+        if 'traj_oracle_kl' in oracle_components:
+          losses['loss_traj_oracle_kl'] = oracle_components['traj_oracle_kl']
+        if 'speed_oracle_kl' in oracle_components:
+          losses['loss_speed_oracle_kl'] = oracle_components['speed_oracle_kl']
+        if float(getattr(self.config, 'oracle_kd_traj_l1_weight', 0.0)) > 0.0:
+          student_tensors = base_model.latest_distill_tensors
+          if student_tensors is not None and 'pred_trajectories' in student_tensors:
+            student_traj = student_tensors['pred_trajectories'].permute(1, 0, 2, 3)
+            gt_route = data['route'][:, :student_traj.size(2)].to(self.device, dtype=torch.float32)
+            probs_key = 'traj_probs' if 'traj_probs' in student_tensors else 'pred_traj_probs'
+            best_idx = torch.argmax(student_tensors[probs_key], dim=0)
+            batch_idx = torch.arange(best_idx.size(0), device=best_idx.device)
+            losses['loss_traj_l1'] = F.l1_loss(student_traj[batch_idx, best_idx], gt_route)
+
     if validation:
       if self.config.use_semantic and not self.config.use_plant:
         ss_miou = torchmetrics.functional.jaccard_index(pred_semantic,
@@ -1389,13 +1886,17 @@ class Engine(object):
     num_batches = 0
     loss_epoch = 0.0
     detailed_losses_epoch = {key: 0.0 for key in self.detailed_loss_weights}
+    a3d_monitor_sum = {key: 0.0 for key in self.a3d_monitor_tags}
+    a3d_monitor_count = {key: 0 for key in self.a3d_monitor_tags}
+    oracle_monitor_sum = {key: 0.0 for key in self.oracle_monitor_tags}
+    oracle_monitor_count = {key: 0 for key in self.oracle_monitor_tags}
     self.optimizer.zero_grad(set_to_none=False)
 
     # Train loop
     for i, data in enumerate(tqdm(self.dataloader_train, disable=self.rank != 0)):
 
       with torch.autocast(device_type='cuda', dtype=torch.float16, enabled=bool(self.config.use_amp)):
-        losses, _ = self.load_data_compute_loss(data, validation=False)
+        losses, metrics = self.load_data_compute_loss(data, validation=False)
         loss = torch.zeros(1, dtype=torch.float32, device=self.device)
         active_loss_keys = []
 
@@ -1412,6 +1913,22 @@ class Engine(object):
           else:
             loss += self.detailed_loss_weights[key] * value
             detailed_losses_epoch[key] += float(self.detailed_loss_weights[key] * float(value.item()))
+
+        for loss_key in self.a3d_monitor_tags:
+          if loss_key in losses:
+            scalar_value = float(losses[loss_key].detach().item())
+            a3d_monitor_sum[loss_key] += scalar_value
+            a3d_monitor_count[loss_key] += 1
+
+        for loss_key in self.oracle_monitor_tags:
+          if loss_key in losses:
+            scalar_value = float(losses[loss_key].detach().item())
+          elif loss_key in metrics:
+            scalar_value = float(metrics[loss_key])
+          else:
+            continue
+          oracle_monitor_sum[loss_key] += scalar_value
+          oracle_monitor_count[loss_key] += 1
 
       if not loss.requires_grad:
         raise RuntimeError(
@@ -1469,6 +1986,15 @@ class Engine(object):
     torch.cuda.empty_cache()
 
     self.log_losses(loss_epoch, detailed_losses_epoch, num_batches, '')
+    if self.rank == 0 and self.writer is not None:
+      for loss_key, short_tag in self.a3d_monitor_tags.items():
+        if a3d_monitor_count[loss_key] > 0:
+          avg_value = a3d_monitor_sum[loss_key] / float(a3d_monitor_count[loss_key])
+          self.writer.add_scalar(f'epoch/a3d_{short_tag}', avg_value, self.cur_epoch)
+      for loss_key, short_tag in self.oracle_monitor_tags.items():
+        if oracle_monitor_count[loss_key] > 0:
+          avg_value = oracle_monitor_sum[loss_key] / float(oracle_monitor_count[loss_key])
+          self.writer.add_scalar(f'epoch/oracle_{short_tag}', avg_value, self.cur_epoch)
 
   @torch.inference_mode()
   def validate(self):

@@ -23,7 +23,7 @@ STUDENT_INIT_CKPT=${TEACHER_DIR}/model_0030.pth
 
 
 torchrun --nnodes=1 --nproc_per_node=1 --max_restarts=1 --rdzv_id=251122 --rdzv_backend=c10d \
-  team_code/my_train_ability_wQtd_AbMoni.py\
+  team_code/my_train_qtd_a3d_oracle.py\
   --id test_AbMonitor_4-gw_stg \
   --use_disk_cache 0 --crop_image 1 --seed 0 --epochs 31 --batch_size 2 --lr 3e-4 --setting all \
   --root_dir /home/spc/b2d_mini_v2 \

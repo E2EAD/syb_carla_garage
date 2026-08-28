@@ -18,7 +18,7 @@ import math
 
 from leaderboard.autoagents import autonomous_agent
 # from model import LidarCenterNet
-from my_model_wTFFdeQtd import LidarCenterNet
+from my_model_qtd import LidarCenterNet
 from config import GlobalConfig
 from data import CARLA_Data
 from nav_planner import RoutePlanner

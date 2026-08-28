@@ -22,11 +22,8 @@ from nav_planner import LateralPIDController, get_throttle
 
 from utils import print_data_info
 from my_query_traj_decoder_v15 import PlanningTrajectoryDecoder as AnchorPlanningTrajectoryDecoder
-from my_query_traj_decoder_random import PlanningTrajectoryDecoder as RandomPlanningTrajectoryDecoder
 from traj_front_door_encoder import TrajFrontDoorEncoder as AnchorTrajFrontDoorEncoder
-from traj_front_door_encoder_random import TrajFrontDoorEncoder as RandomTrajFrontDoorEncoder
 from fuseFeat_front_door_encoder import FuseFeatFrontDoorEncoder as AnchorFuseFeatFrontDoorEncoder
-from fuseFeat_front_door_encoder_random import FuseFeatFrontDoorEncoder as RandomFuseFeatFrontDoorEncoder
 
 
 class LidarCenterNet(nn.Module):
@@ -192,9 +189,9 @@ class LidarCenterNet(nn.Module):
         #                                                             hidden_size=self.config.gru_hidden_size,
         #                                                             waypoints=self.config.predict_checkpoint_len,
         #                                                             target_point_size=target_point_size)
-          PlanningTrajectoryDecoder = RandomPlanningTrajectoryDecoder if self.config.use_random_query_tokens else AnchorPlanningTrajectoryDecoder
-          TrajFrontDoorEncoder = RandomTrajFrontDoorEncoder if self.config.use_random_query_tokens else AnchorTrajFrontDoorEncoder
-          FuseFeatFrontDoorEncoder = RandomFuseFeatFrontDoorEncoder if self.config.use_random_query_tokens else AnchorFuseFeatFrontDoorEncoder
+          PlanningTrajectoryDecoder = AnchorPlanningTrajectoryDecoder
+          TrajFrontDoorEncoder = AnchorTrajFrontDoorEncoder
+          FuseFeatFrontDoorEncoder = AnchorFuseFeatFrontDoorEncoder
 
           self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
 
@@ -234,9 +231,9 @@ class LidarCenterNet(nn.Module):
         #                                                             pred_len=self.config.predict_checkpoint_len,
         #                                                             hidden_size=self.config.gru_hidden_size,
         #                                                             target_point_size=target_point_size)
-          PlanningTrajectoryDecoder = RandomPlanningTrajectoryDecoder if self.config.use_random_query_tokens else AnchorPlanningTrajectoryDecoder
-          TrajFrontDoorEncoder = RandomTrajFrontDoorEncoder if self.config.use_random_query_tokens else AnchorTrajFrontDoorEncoder
-          FuseFeatFrontDoorEncoder = RandomFuseFeatFrontDoorEncoder if self.config.use_random_query_tokens else AnchorFuseFeatFrontDoorEncoder
+          PlanningTrajectoryDecoder = AnchorPlanningTrajectoryDecoder
+          TrajFrontDoorEncoder = AnchorTrajFrontDoorEncoder
+          FuseFeatFrontDoorEncoder = AnchorFuseFeatFrontDoorEncoder
 
           self.query_traj_decoder = PlanningTrajectoryDecoder(self.config)
 

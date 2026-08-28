@@ -30,7 +30,7 @@ from diskcache import Cache
 import torchmetrics
 
 from config import GlobalConfig
-from my_model_wTFFdeQtd import LidarCenterNet
+from my_model_qtd import LidarCenterNet
 # from data import CARLA_Data
 from ability_data import Ability_CARLA_Data
 from plant import PlanT
